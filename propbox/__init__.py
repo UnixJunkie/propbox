@@ -1,29 +1,27 @@
-from __future__ import print_function, division
+from __future__ import print_function, absolute_import
+
+from .simple_futures import (new_future as _new_future,
+                             new_future_exception as _new_future_exception)
 
 # Propbox organizes dependencies between molecular property/descriptor
 # calculations.
 
 
-from rdkit import Chem
-import inspect
-import sys
-import traceback
+############### Propbox exceptions
 
+class PropboxException(Exception):
+    pass
 
-######## Propbox classes
+# A PropboxKeyError is raised when the resolver does not implement a property
+    
+class PropboxKeyError(KeyError, PropboxException):
+    """A PropboxKeyError is raised when the table does not implement a property name
 
-### A "Resolver" adds 1 or more columns to a table.
+    The two attributes are:
+      `resolver` - the resolver under question
+      `column_name` - the property name that does not exist
 
-class Resolver(object):
-    resolver_name = None
-    output_names = []  # List of column names that this knows about
-
-    def resolve_column(self, name, table):
-        # Add column 'column' to the table. May also add other columns.
-        # Raises a PropboxKeyError if the name isn't supported
-        raise NotImplementedError
-
-class PropboxKeyError(KeyError):
+    """
     def __init__(self, resolver, column_name):
         super(PropboxKeyError, self).__init__(self, (resolver, column_name))
         self.resolver = resolver
@@ -36,27 +34,65 @@ class PropboxKeyError(KeyError):
 # A ResolverError describes why, for a row, it was not possible to get
 # the given column name from the table.
 
-class ResolverError(Exception):
+class ResolverError(PropboxException):
+    """A ResolverError is raised when a property cannot be computed.
+
+    The three attributes are:
+      `exception` - the exception describing the failure
+      `table_name` - the name of the table where the failure occurred
+      `column_name` - the property name that could not be resolved
+
+    Note: the exception may be another ResolverError if the failure
+    occurs further up the dependency chain. It may require several
+    links to get to the fundamental exception.
+    """
+    
     def __init__(self, exception, table_name, column_name):
         self.exception = exception
         self.table_name = table_name
         self.column_name = column_name
     
     def get_error(self):
+        """Internal helper function use to implement __str__
+
+        Should not be used directly. (Let me know if you think
+        it should be part of the public API.)
+        """
+        # Get the fully qualified name for the column
         if self.table_name is None:
             name = self.column_name
         else:
             name = "%s.%s" % (self.table_name, self.column)
+        # Recursively expand to get a description of full
+        # path that lead to the actual exception.
         if isinstance(self.exception, ResolverError):
             path, exception = self.exception.get_error()
             path = name + " -> " + path
         else:
             path = name
             exception = self.exception
+        # return a path like "abc -> module.def -> mod2.ghi -> xyz"
+        # and the exception that caused the error.
         return path, exception
+    
     def __str__(self):
         path, exception = self.get_error()
         return "%s: %r" % (path, exception)
+
+##############################
+
+
+### A "Resolver" adds 1 or more columns to a table.
+
+class Resolver(object):
+    resolver_name = None
+    output_names = []  # List of column names that this knows about
+
+    def resolve_column(self, name, table):
+        # Add column 'column' to the table. May also add other columns.
+        # Raises a PropboxKeyError if the name isn't supported
+        raise NotImplementedError
+
 
 # Some of the futures may contain an exception. Wrap them in a
 # ResolveError exception so the error reporting has the right
@@ -66,7 +102,7 @@ def wrap_future_exceptions(futures, table_name, column_name):
     for future in futures:
         exception = future.exception()
         if exception is not None:
-            future = new_future_exception(ResolverError(exception, table_name, column_name))
+            future = _new_future_exception(ResolverError(exception, table_name, column_name))
         new_futures.append(future)
     return new_futures
 
@@ -156,7 +192,7 @@ class Aliases(Resolver):
 
         # Get the underlying name, wrap any exception with a description of
         # the alias step, and set the new results.
-        futures = table.get_column_futures(descriptor_alias)
+        futures = table.get_futures(descriptor_alias)
         futures = wrap_future_exceptions(futures, table.table_name, name)
         table.set_descriptor_futures(column, futures)
 
@@ -176,7 +212,7 @@ class ParentTableResolver(Resolver):
         if name in self.input_map:
             # Forward to the parent table
             parent_name = self.input_map[name]
-            parent_futures = self.parent_table.get_column_futures(parent_name)
+            parent_futures = self.parent_table.get_futures(parent_name)
 
             # Wrap any exceptions with the alias information
             parent_futures = wrap_future_exceptions(parent_futures, table.table_name, name)
@@ -249,7 +285,7 @@ class Module(Resolver):
         name_in_module = self.output_map[name]
         self.resolver.resolve_column(name_in_module, subtable)
 
-        futures = subtable.get_column_futures(name_in_module)
+        futures = subtable.get_futures(name_in_module)
         futures = wrap_future_exceptions(futures, table.table_name, name)
 
         table.set_descriptor_futures(column, futures)
@@ -275,7 +311,7 @@ class Calculator(Resolver):
         column_name = name
 
         # Get all of the inputs and see which ones have realizable values
-        input_futures = [table.get_column_futures(input_name)
+        input_futures = [table.get_futures(input_name)
                                 for input_name in self.input_names]
         input_values = []
         valid_record_indices = []
@@ -295,7 +331,7 @@ class Calculator(Resolver):
                 # Mark all of the calculation children as "could not compute"
                 failure_name = self.input_names[future_index]
                 for output_name, result_column in zip(self.output_names, result_columns):
-                    result_column[record_index] = new_future_exception(
+                    result_column[record_index] = _new_future_exception(
                         ResolverError(future.exception(), table.table_name, output_name))
             else:
                 # Got a value. Add that to the list of terms to compute
@@ -343,7 +379,7 @@ class OutputDescriptors(object):
         if self._n != 1:
             raise TypeError("Can only use add_result() when there is a single output value")
         next_index = self._valid_record_indices.pop()
-        self._result_columns[0][next_index] = new_future(result)
+        self._result_columns[0][next_index] = _new_future(result)
 
     def add_results(self, results):
         """Specify a list/tuple of result values for the next record.
@@ -355,7 +391,7 @@ class OutputDescriptors(object):
                             % (self._n, len(results)))
         next_index = self._valid_record_indices.pop()
         for column, result in zip(self._result_columns, results):
-            column[next_index] = new_future(result)
+            column[next_index] = _new_future(result)
             
     def add_futures(self, futures):
         """Specify a list/tuple of futures for the next record.
@@ -367,13 +403,13 @@ class OutputDescriptors(object):
                             % (self._n, len(futures)))
         next_index = self._valid_record_indices.pop()
         for column, future in zip(self._result_columns, futures):
-            column[next_index] = new_future(future)
+            column[next_index] = _new_future(future)
 
     def add_exception(self, exception):
         """Specify an exception for the next record."""
         next_index = self._valid_record_indices.pop()
         for output_name, column in zip(self._output_names, self._result_columns):
-            column[next_index] = new_future_exception(
+            column[next_index] = _new_future_exception(
                 ResolverError(exception, self._table_name, output_name))
                 #CalculationError(exception, output_name, self._table_name))
 
@@ -402,7 +438,7 @@ class OutputDescriptors(object):
         # Put all of the futures in the right location
         for column, result_column in zip(column_results, self._result_columns):
             for i, index in pairs:
-                result_column[index] = new_future(column[i])
+                result_column[index] = _new_future(column[i])
         
     def add_column_futures(self, column_futures):
         """Specify a list/tuple of futures for each column
@@ -457,6 +493,7 @@ class CalculateName(Calculator):
                 output_descriptors.add_results([f(*values)])
             except Exception, err:
                 if table.debug:
+                    import traceback, sys
                     sys.stderr.write("Unable to calculate %r using %r with arguments %r\n"
                                      % (table.get_qualified_name(name), f, tuple(values)))
                     traceback.print_exc()
@@ -543,6 +580,7 @@ def calculate(input_names=None, output_names=None,
             raise ValueError("output_names must be None, a string, or a tuple")
     
     def decorate_propbox_function(f):
+        import inspect
         if input_names is None:
             argspec = inspect.getargspec(f)
             input_names_ = argspec.args
@@ -587,6 +625,7 @@ def calculate(input_names=None, output_names=None,
 
 def collect_resolvers(d=None):
     if d is None:
+        import inspect
         d = inspect.stack()[1][0].f_globals
     resolvers = []
     for name, value in d.iteritems():
@@ -634,24 +673,27 @@ class PropertyTable(object):
             return name
         return "%s.%s" % (self.table_name, name)
 
-    def get_column_futures(self, column):
-        if column in self.table:
-            return self.table[column]
+    def get_futures(self, name):
+        if name in self.table:
+            return self.table[name]
             
-        self.resolver.resolve_column(column, self)
+        self.resolver.resolve_column(name, self)
         try:
-            return self.table[column]
+            return self.table[name]
         except KeyError:
             raise AssertionError("Resolver %r did not set descriptor for column %r"
                                  % (self.resolver, column))
 
-    def set_descriptor_futures(self, name, futures):
-        if name in self.table:
-            raise ValueError("Descriptor name %r already set" % (name,))
-        self.table[name] = futures
+    def set_futures(self, column, futures):
+        if column in self.table:
+            raise ValueError("Column name %r already set" % (column,))
+        if len(futures) != self._num_records:
+            raise ValueError("Column requires a list of size %d but got %d elements"
+                             % (self._num_records, len(futures)))
+        self.table[column] = futures
             
-    def get_column_values(self, column, error_value=None):
-        futures = self.get_column_futures(column)
+    def get_values(self, name, error_value=None):
+        futures = self.get_futures(name)
         values = []
         for future in futures:
             if future.exception() is not None:
@@ -660,32 +702,41 @@ class PropertyTable(object):
                 values.append(future.result())
         return values
 
-    def get_future_records(self, columns):
+    def set_values(self, name, values):
+        if name in self.table:
+            raise ValueError("Column name %r already set" % (name,))
+        if len(values) != self._num_records:
+            raise ValueError("Column requires a list of size %d but got %d elements"
+                             % (self._num_records, len(values)))
+        self.table[name] = [_new_future(value) for value in values]
+        
+
+    def get_future_records(self, names):
         table_columns = []
-        for column in columns:
-            if column not in self.table:
-                self.resolver.resolve_column(column, self)
+        for name in names:
+            if name not in self.table:
+                self.resolver.resolve_column(name, self)
             try:
-                table_columns.append(self.table[column])
+                table_columns.append(self.table[name])
             except KeyError:
                 raise AssertionError(
                     "Resolver %r did not set descriptor for column %r"
-                    % (self.resolver, column))
+                    % (self.resolver, name))
 
         records = []
         for values in zip(*table_columns):
-            record = dict(zip(columns, values))
+            record = dict(zip(names, values))
             records.append(record)
         return records
 
 
-    def get_records(self, columns, error_value=None):
+    def get_records(self, names, exception_value=None):
         new_records = []
-        for record in self.get_future_records(columns):
+        for record in self.get_future_records(names):
             new_record = {}
             for k, v in record.iteritems():
                 if v.exception() is not None:
-                    new_record[k] = error_value
+                    new_record[k] = exception_value
                 else:
                     new_record[k] = v.result()
             new_records.append(new_record)
@@ -758,6 +809,7 @@ class PropertyTable(object):
         missing_obj = object()
         columns = [self.get_column_values(name, missing_obj) for name in names]
 
+        # Convert them to a string, or use the appropriate missing value
         new_columns = []
         for (name, column, formatter, missing_value) in zip(name, columns, formatters, missing_values):
             values = []
@@ -775,7 +827,8 @@ class PropertyTable(object):
                                  % (name, row_id, value, formatter, err))
             new_columns.append(values)
 
-        
+
+        # When given a filename, I need to open and close it.
         if isinstance(destination, basestring):
             fileobj = open(destination, "w")
             close = fileobj.close
@@ -783,10 +836,11 @@ class PropertyTable(object):
             fileobj = destination
             close = None
 
-        # See if it's one of the easy delimiters
-        delimiter = _delimiters.get(dialect, None)
-        if delimiter is not None:
-            try:
+        try:
+            # See if it's one of the easy delimiters
+            delimiter = _delimiters.get(dialect, None)
+            if delimiter is not None:
+                # It is! I can write it myself.
                 if include_header:
                     header = delimiter.join(headers) + "\n"
                     fileobj.write(header)
@@ -794,11 +848,8 @@ class PropertyTable(object):
                     line = delimiter.join(values) + "\n"
                     fileobj.write(line)
             
-            finally:
-                if close is not None:
-                    close()
-        else:
-            try:
+            else:
+                # Use the csv module
                 import csv
                 writer = csv.writer(fileobj, dialect)
 
@@ -806,14 +857,14 @@ class PropertyTable(object):
                     writer.writerow(headers)
                 for values in zip(*new_columns):
                     writer.writerow(values)
-            finally:
-                if close is not None:
-                    close()
+        finally:
+            if close is not None:
+                close()
         
 ####
         
         
-def records_to_columns(records):
+def _records_to_columns(records):
     # The records come in as a dictionary per compound.
     # I store the data as columns, with all values for a given descriptor.
     # This also verifies that all record dictionaries have the 
@@ -829,7 +880,7 @@ def records_to_columns(records):
         else:
             if len(record) != n:
                 raise ValueError("Record %d has %d elements (%r), expecting %d (%r)"
-                                 % (record_i, len(record), sorted(recor),
+                                 % (record_i, len(record), sorted(record),
                                     n, sorted(columns)))
             try:
                 for descriptor, value in record.items():
@@ -839,7 +890,7 @@ def records_to_columns(records):
                                  % (record_i, descriptor))
     return columns
 
-def import_resolver(resolver):
+def _import_resolver(resolver):
     if not isinstance(resolver, basestring):
         return resolver
     module_resolver = __import__(resolver, globals(), {}, ["resolver"], 0)
@@ -847,23 +898,23 @@ def import_resolver(resolver):
 
 def _add_id_column(future_columns, num_records):
     if "id" not in future_columns:
-        future_columns["id"] = [new_future("ID%d" % i) for i in range(1, num_records+1)]
+        future_columns["id"] = [_new_future("ID%d" % i) for i in range(1, num_records+1)]
     
 
 def make_table_from_records(resolver, initial_records, config=None, debug=False):
-    resolver = import_resolver(resolver)
+    resolver = _import_resolver(resolver)
     num_records = len(initial_records)
-    columns = records_to_columns(initial_records)
+    columns = _records_to_columns(initial_records)
     future_columns = {}
     for descriptor, values in columns.iteritems():
-        future_columns[descriptor] = [new_future(value) for value in values]
+        future_columns[descriptor] = [_new_future(value) for value in values]
     _add_id_column(future_columns, num_records)
 
     return PropertyTable(resolver, future_columns, num_records,
                          config=config, debug=debug)
 
 def make_table_from_columns(resolver, initial_columns, config=None, debug=False):
-    resolver = import_resolver(resolver)
+    resolver = _import_resolver(resolver)
     # Double-check that all of the list lengths are the same
     lengths = set(map(len, initial_columns.values()))
     if len(lengths) == 1:

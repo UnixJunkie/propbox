@@ -520,7 +520,7 @@ class CalculateNames(Calculator):
             self.input_names, self.output_names, self.f, self.docstring,
             self.include_table, self.resolver_name)
     
-    def calculate(self, table, input_values, output_descriptors):
+    def calculate(self, table, name, input_values, output_descriptors):
         f = self.f
         include_table = self.include_table
         for values in input_values:
@@ -529,6 +529,11 @@ class CalculateNames(Calculator):
             try:
                 output_descriptors.add_results(f(*values))
             except Exception, err:
+                if DEBUG:
+                    import traceback, sys
+                    sys.stderr.write("Unable to calculate %r using %r with arguments %r\n"
+                                     % (table.get_qualified_name(name), f, tuple(values)))
+                    traceback.print_exc()
                 output_descriptors.add_exception(err)
         
 

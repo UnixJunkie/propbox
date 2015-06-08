@@ -1,11 +1,13 @@
-from __future__ import print_function, division
+from __future__ import print_function, division, absolute_import
 
 from rdkit import Chem
 from rdkit.Chem import Descriptors
 from rdkit.Chem import SaltRemover
 
-import pylru
-from propbox2 import collect_resolvers, calculate, Propbox
+from . import pylru
+from . import collect_resolvers, calculate, Propbox, make_table_from_columns
+from . import simple_futures
+import os
 
 @calculate()
 def calc_input_mol(input_record, input_format):
@@ -73,25 +75,98 @@ def calc_mol(input_mol, table):
 def calc_MolWt(mol):
     return Descriptors.MolWt(mol)
 
+@calculate()
+def calc_smiles(mol):
+    return Chem.MolToSmiles(mol, True) # use isomeric canonical SMILES
+    
+@calculate()
+def calc_cansmiles(mol):
+    return Chem.MolToSmiles(mol, False) # use non-isomeric canonical SMILES
+    
+@calculate()
+def calc_usmsmiles(mol):
+    return Chem.MolToSmiles(mol, False, canonical=False) # use non-isomeric, non-canonical SMILES
 
-resolver = collect_resolvers()  # get all of the calculators
+_resolver = resolver = collect_resolvers()  # get all of the calculators
 
-# Break the resolver into indepenent stages.
+# Break the resolver into independent stages.
 
 _input_processing = set(["calc_mol", "calc_input_mol"])
 input_resolver = Propbox(r for r in resolver if r.resolver_name in _input_processing)
 mol_resolver = Propbox(r for r in resolver if r.resolver_name not in _input_processing)
 
+
+def make_table_from_source(source, format=None, id_tag=None, reader_args={},
+                           resolver=None, config=None):
+    if resolver is None:
+        resolver = _resolver
+    from . import rdkit_toolkit as T
+    reader = T.read_ids_and_molecules(source, format, id_tag=id_tag,
+                                      reader_args=reader_args)
+
+    has_smiles = None
+    input_smiles = None
+
+    id_list = []
+    mol_list = []
+    smiles_list = []
+
+    new_future = simple_futures.new_future
+    new_future_exception = simple_futures.new_future_exception
+    
+    for mol_index, (id, mol) in enumerate(reader, 1):
+        if has_smiles is None:
+            if mol is None:
+                input_smiles = None
+            else:
+                has_smiles = mol.HasProp("_input_smiles")
+                if has_smiles:
+                    input_smiles = mol.GetProp("_input_smiles")
+                    mol.ClearProp("_input_smiles")
+        elif has_smiles:
+            if mol is None:
+                input_smiles = None
+            else:
+                input_smiles = mol.GetProp("_input_smiles")
+                mol.ClearProp("_input_smiles")
+
+        if id is None:
+            id = "ID%d" % (mol_index,)
+        id_list.append(new_future(id))
+        
+        if mol is None:
+            mol_list.append(new_future_exception(ValueError("Cannot parse record %d with id %r"
+                                                            % (mol_index, id))))
+        else:
+            mol_list.append(new_future(mol))
+            
+        smiles_list.append(new_future(input_smiles))
+
+    if has_smiles:
+        input_format = ["smi"] * len(smiles_list)
+    else:
+        input_format = [None] * len(smiles_list)
+    columns = {
+        "id": id_list,
+        "input_mol": mol_list,
+        "input_record": smiles_list,
+        "input_format": input_format,
+        }
+    return make_table_from_columns(resolver, columns, config)
+
 if __name__ == "__main__":
-    import propbox2
-    smiles_list = ["c1ccccc1O", "CCO", "Q"]
+    properties = make_table_from_source("/Users/dalke/tmp/benzotriazole.sdf",
+                                        id_tag="EMOLECULES_ID",
+                                        reader_args={"strictParsing": False})
     
-    properties = propbox2.make_table_from_columns(
-        resolver,
-        {"input_record": smiles_list,
-         "input_format": ["smiles"]*len(smiles_list),
-         })
+    ## smiles_list = ["c1ccccc1O", "CCO", "Q"]
     
-    print(properties.get_column_values("MolWt"))
+    ## properties = propbox2.make_table_from_columns(
+    ##     resolver,
+    ##     {"input_record": smiles_list,
+    ##      "input_format": ["smiles"]*len(smiles_list),
+    ##      })
     
-    properties.save("/dev/stdout", ["id", "MolWt"], formatters=[str, "{:.2f}".format], dialect="excel2")
+    ## print(properties.get_values("MolWt"))
+    
+    properties.save("/dev/stdout", ["id", "MolWt"], formatters=[str, "{:.2f}".format], dialect="excel")

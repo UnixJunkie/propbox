@@ -157,10 +157,11 @@ _delimiter_method = {
     "tab": "\t",
     "whitespace": "whitespace",
     "to-eol": "to-eol",
+    None: "to-eol",
     }
 
 def _read_smiles(infile, id_tag, reader_args):
-    delimiter = reader_args.get("delimiter", " ")
+    delimiter = reader_args.get("delimiter", None)
     delimiter = _delimiter_method[delimiter]
     
     titleLine = bool(reader_args.get("titleLine", False))

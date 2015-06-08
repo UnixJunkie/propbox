@@ -7,6 +7,8 @@ from .simple_futures import (new_future as _new_future,
 # calculations.
 
 
+DEBUG = False
+
 ############### Propbox exceptions
 
 class PropboxException(Exception):
@@ -194,7 +196,7 @@ class Aliases(Resolver):
         # the alias step, and set the new results.
         futures = table.get_futures(descriptor_alias)
         futures = wrap_future_exceptions(futures, table.table_name, name)
-        table.set_descriptor_futures(column, futures)
+        table.set_futures(column, futures)
 
                 
 ### A Module isolates a resolver into its own subtable
@@ -218,7 +220,7 @@ class ParentTableResolver(Resolver):
             parent_futures = wrap_future_exceptions(parent_futures, table.table_name, name)
 
             # Copy the parent table values into the subtable
-            table.set_descriptor_futures(name, parent_futures)
+            table.set_futures(name, parent_futures)
 
         else:
             # Let the resolver handle it.
@@ -278,7 +280,6 @@ class Module(Resolver):
                 num_records = len(table),
                 config = config,
                 table_name = subtable_name,
-                debug = table._debug,
                 )
             table.set_cache(self.module_name, subtable)
 
@@ -288,7 +289,7 @@ class Module(Resolver):
         futures = subtable.get_futures(name_in_module)
         futures = wrap_future_exceptions(futures, table.table_name, name)
 
-        table.set_descriptor_futures(column, futures)
+        table.set_futures(column, futures)
 
 
 
@@ -358,7 +359,7 @@ class Calculator(Resolver):
         
         # Copy the results to the main table.
         for output_name, futures in zip(self.output_names, result_columns):
-            table.set_descriptor_futures(output_name, futures)
+            table.set_futures(output_name, futures)
 
 # This is a support object to make it easier to calculate descriptors.
 
@@ -492,7 +493,7 @@ class CalculateName(Calculator):
             try:
                 output_descriptors.add_results([f(*values)])
             except Exception, err:
-                if table.debug:
+                if DEBUG:
                     import traceback, sys
                     sys.stderr.write("Unable to calculate %r using %r with arguments %r\n"
                                      % (table.get_qualified_name(name), f, tuple(values)))
@@ -653,7 +654,7 @@ _delimiters = {
     }                                                          
 
 class PropertyTable(object):
-    def __init__(self, resolver, table, num_records, config=None, table_name=None, debug=True):
+    def __init__(self, resolver, table, num_records, config=None, table_name=None):
         self.resolver = resolver
         self.table = table
         self._num_records = num_records
@@ -661,7 +662,6 @@ class PropertyTable(object):
             config = {}
         self.config = config
         self.table_name = table_name
-        self.debug = debug
 
         self._cache = {}
 
@@ -807,7 +807,7 @@ class PropertyTable(object):
 
         # Get the columns to display
         missing_obj = object()
-        columns = [self.get_column_values(name, missing_obj) for name in names]
+        columns = [self.get_values(name, missing_obj) for name in names]
 
         # Convert them to a string, or use the appropriate missing value
         new_columns = []
@@ -901,7 +901,7 @@ def _add_id_column(future_columns, num_records):
         future_columns["id"] = [_new_future("ID%d" % i) for i in range(1, num_records+1)]
     
 
-def make_table_from_records(resolver, initial_records, config=None, debug=False):
+def make_table_from_records(resolver, initial_records, config=None):
     resolver = _import_resolver(resolver)
     num_records = len(initial_records)
     columns = _records_to_columns(initial_records)
@@ -911,33 +911,41 @@ def make_table_from_records(resolver, initial_records, config=None, debug=False)
     _add_id_column(future_columns, num_records)
 
     return PropertyTable(resolver, future_columns, num_records,
-                         config=config, debug=debug)
+                         config=config)
 
-def make_table_from_columns(resolver, initial_columns, config=None, debug=False):
+def make_table_from_columns(resolver, initial_columns, config=None):
     resolver = _import_resolver(resolver)
+    values = initial_columns.values()
+    if not values:
+        # Short-circuit the empty table.
+        return PropertyTable(resolver, {}, 0, config=config)
+    
     # Double-check that all of the list lengths are the same
-    lengths = set(map(len, initial_columns.values()))
+    lengths = set(map(len, values))
     if len(lengths) == 1:
         future_columns = {}
         for descriptor, values in initial_columns.iteritems():
-            future_columns[descriptor] = [new_future(value) for value in values]
+            if hasattr(values[0], "add_done_callback"):
+                future_columns[descriptor] = values # Is this too hackish?
+            else:
+                future_columns[descriptor] = [_new_future(value) for value in values]
         num_records = list(lengths)[0]
         _add_id_column(future_columns, num_records)
         
-        return PropertyTable(resolver, future_columns, num_records,
-                             config=config, debug=debug)
+        return PropertyTable(resolver, future_columns, num_records, config=config)
 
     # Report the problem column
         
     n = None
     reference = None
+    # Sort so it's in a consistent order
     for descriptor, values in sorted(initial_columns.items()):
         if n is None:
             n = len(values)
             reference = descriptor
         else:
             if n != len(values):
-                raise ValueError("%r has %d items while %r has %d"
+                raise ValueError("Column length mismatch: %r has length %d while %r has length %d"
                                  % (reference, n,
                                     descriptor, len(values)))
     raise AssertionError("record list had different lengths but now they are the same")

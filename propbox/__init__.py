@@ -569,16 +569,22 @@ def calculate(input_names=None, output_names=None,
             input_names = [input_names]
         elif isinstance(input_names, tuple):
             pass
+        elif isinstance(input_names, list):
+            input_names = tuple(input_names)
         else:
-            raise ValueError("input_names must be None, a string, or a tuple")
+            raise ValueError("input_names must be None, a string, or a list/tuple, not %r"
+                             % (input_names,))
 
     if output_names is not None:
         if isinstance(output_names, basestring):
             pass
         elif isinstance(output_names, tuple):
             pass
+        elif isinstance(output_names, list):
+            output_names = tuple(output_names)
         else:
-            raise ValueError("output_names must be None, a string, or a tuple")
+            raise ValueError("output_names must be None, a string, or a list/tuple, not %r"
+                             % (output_names,))
     
     def decorate_propbox_function(f):
         import inspect

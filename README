@@ -52,14 +52,202 @@ GPLv2 or later. (See COPYING.pylru.)
 'rdprops' command-line tool
 ===========================
 
+The 'rdprops' command-line program computes molecular descriptors
+using the RDKit cheminformatics toolkit from rdkit.org . It implements
+the descriptors from rdkit.Chem.Descriptors as well as a few versions
+of SMILES strings.
+
+By default it reads a SMILES file from stdin and writes the results to
+stdout. I'll ask it to read from a named SMILES file instead, and only
+show the first few lines of output::
+
+  % ./rdprops tests/benzodiazepine.smi | head
+  id	smiles	MolWt
+  1688	CN1C(=O)CN=C(c2ccc(Cl)cc2)c2cc(Cl)ccc21	319.191
+  1963	OCc1nnc2n1-c1ccc(Cl)cc1C(c1ccccc1Cl)=NC2	359.216
+  2118	Cc1nnc2n1-c1ccc(Cl)cc1C(c1ccccc1)=NC2	308.772
+  2802	O=C1CN=C(c2ccccc2Cl)c2cc([N+](=O)[O-])ccc2N1	315.716
+  2809	O=C(O)C1N=C(c2ccccc2)c2cc(Cl)ccc2NC1=O	314.728
+  2997	O=C1CN=C(c2ccccc2)c2cc(Cl)ccc2N1	270.719
+  3016	CN1C(=O)CN=C(c2ccccc2)c2cc(Cl)ccc21	284.746
+  3261	Clc1ccc2c(c1)C(c1ccccc1)=NCc1nncn1-2	294.745
+  3299	CCOC(=O)C1N=C(c2ccccc2F)c2cc(Cl)ccc2NC1=O	360.772
+
+
+The default output contains the record identifier ("id"), the
+canonical isomeric SMILES ("smiles"), and the molecular weight
+("MolWt"). Use the `--columns` option to specify different columns::
+
+  % ./rdprops tests/benzodiazepine.smi --columns 'id,HeavyAtomCount,MolWt' | head
+  id	HeavyAtomCount	MolWt
+  1688	21	319.191
+  1963	24	359.216
+  2118	22	308.772
+  2802	22	315.716
+  2809	22	314.728
+  2997	19	270.719
+  3016	20	284.746
+  3261	21	294.745
+  3299	25	360.772
+
+Propbox uses the RDKit descriptor names for the columns, and by
+default uses the names for the column headers. You might prefer
+a different header::
+
+  % ./rdprops tests/benzodiazepine.smi --columns 'id,HeavyAtomCount,MolWt' --headers 'ID,HEAVIES,MW' | head
+  ID	HEAVIES	MW
+  1688	21	319.191
+  1963	24	359.216
+  2118	22	308.772
+  2802	22	315.716
+  2809	22	314.728
+  2997	19	270.719
+  3016	20	284.746
+  3261	21	294.745
+  3299	25	360.772
+
+or perhaps don't want a header at all::
+
+  % ./rdprops tests/benzodiazepine.smi --columns 'id,HeavyAtomCount,MolWt' --no-header | head
+  1688	21	319.191
+  1963	24	359.216
+  2118	22	308.772
+  2802	22	315.716
+  2809	22	314.728
+  2997	19	270.719
+  3016	20	284.746
+  3261	21	294.745
+  3299	25	360.772
+  3369	21	302.736
+
+The default output is tab-separated, but you can change that with the
+`--dialect` option, which can be one of 'tab', 'space', 'whitespace',
+'excel' or 'excel-tab'. (The 'whitespace' option is the same as
+'space', and the Excel dialects are as defined by Python's csv
+module, and include the special rules for quoting)::
+
+  % ./rdprops tests/benzodiazepine.smi --columns 'id,HeavyAtomCount,MolWt' --dialect excel | head
+  id,HeavyAtomCount,MolWt
+  1688,21,319.191
+  1963,24,359.216
+  2118,22,308.772
+  2802,22,315.716
+  2809,22,314.728
+  2997,19,270.719
+  3016,20,284.746
+  3261,21,294.745
+  3299,25,360.772
+
+
+List the available descriptors
+------------------------------
+
+use the `--list` option to get a list of the available descriptors::
+
+  % ./rdprops --list | wc -l
+       124
+
+That's rather a lot, so I'll elide some of them::
+
+  % ./rdprops --list
+  _chargeDescriptors
+  BalabanJ
+  BertzCT
+  cansmiles
+  chargeDescriptorVersion
+  Chi0
+  Chi0n
+  Chi0v
+     ...
+  ExactMolWt
+  FractionCSP3
+  HallKierAlpha
+  HeavyAtomCount
+  HeavyAtomMolWt
+  id
+  input_format
+  input_mol
+  input_record
+     ...
+  mol
+  MolLogP
+  MolMR
+  MolWt
+  MolWt_version
+  nci_iupac_name
+  nci_names
+    ...
+  TPSA
+    ...
+  VSA_EState8
+  VSA_EState9
+
+A future version will include a way to get a description of each
+descriptor.
+
+What's also missing is a naming convention or some other mechanism to
+describe if it makes sense to print a descriptor as text. For example,
+the 'mol' property is the RDKit molecule object for the input
+structure, after de-salting. It doesn't make sense to display the
+opaque text representation of a molecule object ::
+
+  % ./rdprops tests/benzodiazepine.smi --columns 'id,mol' | head -5 
+  id	mol
+  1688	<rdkit.Chem.rdchem.Mol object at 0x105c44910>
+  1963	<rdkit.Chem.rdchem.Mol object at 0x105c44980>
+  2118	<rdkit.Chem.rdchem.Mol object at 0x105c449f0>
+  2802	<rdkit.Chem.rdchem.Mol object at 0x105c44a60>
+
+Similarly, the _chargeDescriptors property is another internal
+property that shouldn't really be exposed. (I'll use this as an
+example of how the quoting rules work for the 'excel' dialect.)::
+
+  % ./rdprops tests/benzodiazepine.smi --columns 'id,_chargeDescriptors' --dialect excel | head -3
+  id,_chargeDescriptors
+  1688,"ChargeDescriptor(minCharge=-0.31319991842931816, maxCharge=0.24791727974294836)"
+  1963,"ChargeDescriptor(minCharge=-0.38834256479943147, maxCharge=0.16298797813009208)"
+
+I may move to the convention that a leading '_', and perhaps also a
+leading lowercase character, indicate an internal variable. Or I may
+have some way to mark certain descriptors as only being for internal
+use. Then again, I like how IPython supports adapters to, for example,
+show inline images for a molecule in a table. Perhaps I'll do that.
+
+Specify the format
+------------------
 
 
 
-Workflow and Depenencies
-========================
+
+
+Reader arguments
+----------------
+
+The RDKit SMILES and SDF readers support a few options:
+
+  SMILES:
+    has_header - Is the first line of the SMILES file a
+       header line? (boolean, with default of False)
+       
+    delimiter - Specify how to parse the fields of a
+       SMILES files? (One of 'space'/" ", 'tab'/"\t",
+       'whitespace', or 'to-eol', with default of 'to-eol')
+
+    sanitize - Should the newly parsed molecule be
+       sanitized? (boolean, with default of True)
+  
+  SDF:
+    strictParsing - Use strict parsing rules? (boolean,
+       with default of True)
+    
+    removeHs - Should hydrogens be removed from the
+       molecule? (boolean, with default of True)
+    
+    sanitize - same as in SMILES
 
 
 
+Propbox implements a portion of the chemfp toolkit I/O API, 
 
 
 Andrew Dalke / Dalke Scientific / dalke@dalkescientific.com

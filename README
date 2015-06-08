@@ -216,6 +216,53 @@ show inline images for a molecule in a table. Perhaps I'll do that.
 Specify the format
 ------------------
 
+Propbox uses the filename extension to determine the file format, and
+to see if the file is gzip compressed. The following case-insensitive
+extensions are supported:
+
+  .smi, .ism, .isosmi - SMILES
+  .smi.gz, .ism.gz, .isosmi.gz - gzip compressed SMILES
+
+  .sdf, .sd, .mdl - SD file
+  .sdf.gz, .sd.gz, .mdl.gz - gzip compressed SD file
+
+If propbox does not recognize the file format extension, or if the
+input comes from stdin, then it will assume the input is an
+uncompressed file format.
+
+You can specify the format directly using `--format` instead of
+depending on propbox's auto-detection code. For example, since rdprops
+expects a SMILES file from stdin, pipeing in an SD file will cause a
+problem::
+
+
+  % ./rdprops < tests/CHEMBL11862.sdf
+  [01:33:10] SMILES Parse Error: syntax error for input: CHEMBL11862
+  [01:33:10] SMILES Parse Error: syntax error for input: SciTegic11101117232D
+  Traceback (most recent call last):
+    File "rdprops", line 9, in <module>
+      rdprops.main()
+    File "/Users/dalke/cvses/propbox/propbox/rdprops.py", line 174, in main
+      ids_and_mols = list(batch_reader)
+    File "/Users/dalke/cvses/propbox/propbox/rdkit_toolkit.py", line 183, in _read_smiles
+      raise ValueError("Line %d is empty" % (lineno,))
+  ValueError: Line 3 is empty
+  
+
+I'll instead tell it the input is an uncompressed SD file::
+
+  % ./rdprops --format sdf < tests/CHEMBL11862.sdf
+  id	smiles	MolWt
+  CHEMBL11862	Oc1cc2c(cc1O)CNCC2	165.192
+
+The supported formats are 'smi', 'smi.gz', 'sdf', and 'sdf.gz', with
+the expected meanings.
+
+
+Use an SD tag as a title
+------------------------
+
+
 
 
 
@@ -235,7 +282,8 @@ The RDKit SMILES and SDF readers support a few options:
 
     sanitize - Should the newly parsed molecule be
        sanitized? (boolean, with default of True)
-  
+
+
   SDF:
     strictParsing - Use strict parsing rules? (boolean,
        with default of True)
@@ -246,8 +294,149 @@ The RDKit SMILES and SDF readers support a few options:
     sanitize - same as in SMILES
 
 
+The "delimiter" option is a bit unusual. Different people have a
+different interpretation of what a SMILES file means. The orignal
+Daylight definition was that the file contains a SMILES, followed by a
+whitespace, and the rest of the line is the identifier.
 
-Propbox implements a portion of the chemfp toolkit I/O API, 
+In propbox (and in chemfp) this is called the 'to-eol' delimiter, and
+is the default.
+
+Other people think of a SMILES file as a space, tab, or whitespace
+separated file, where the first column is the SMILES, the second
+column is the identifier, and additional columns are ignored.  In
+propbox these are refered to as the "space", "tab", and "whitespace"
+delimiter styles, respectively. ("Whitespace" means that each word is
+treated as its own field.)
+
+You can specify these reader arguments on the command line. For
+example, in "tests/drugs.smi" is a file I got from Daylight many years
+ago::
+
+  % cat tests/drugs.smi 
+  N12CCC36C1CC(C(C2)=CCOC4CC5=O)C4C3N5c7ccccc76 Strychnine
+  c1ccccc1C(=O)OC2CC(N3C)CCC3C2C(=O)OC cocaine
+  COc1cc2c(ccnc2cc1)C(O)C4CC(CC3)C(C=C)CN34 quinine
+  OC(=O)C1CN(C)C2CC3=CCNc(ccc4)c3c4C2=C1 lyseric acid
+  CCN(CC)C(=O)C1CN(C)C2CC3=CNc(ccc4)c3c4C2=C1 LSD
+  C123C5C(O)C=CC2C(N(C)CC1)Cc(ccc4O)c3c4O5 morphine
+  C123C5C(OC(=O)C)C=CC2C(N(C)CC1)Cc(ccc4OC(=O)C)c3c4O5 heroin
+  c1ncccc1C1CCCN1C nicotine
+  CN1C(=O)N(C)C(=O)C(N(C)C=N2)=C12 caffeine
+  C1C(C)=C(C=CC(C)=CC=CC(C)=CCO)C(C)(C)C1 vitamin a
+
+Two of the identifiers, "lyseric acid" and "vitamin a", contain a
+space in them. The default delimiter style is 'to-eol', which is why
+the following show the full names::
+
+  % ./rdprops --columns 'id,MolWt' tests/drugs.smi
+  id	MolWt
+  Strychnine	334.419
+  cocaine	303.358
+  quinine	324.424
+  lyseric acid	282.343
+  LSD	323.44
+  morphine	285.343
+  heroin	369.417
+  nicotine	162.236
+  caffeine	194.194
+  vitamin a	272.432
+
+To specify the 'whitespace' delimiter style, use the `-R` parameter,
+which takes a NAME=VALUE setting::
+
+  % ./rdprops --columns 'id,MolWt' -R delimiter=whitespace tests/drugs.smi 
+  id	MolWt
+  Strychnine	334.419
+  cocaine	303.358
+  quinine	324.424
+  lyseric	282.343
+  LSD	323.44
+  morphine	285.343
+  heroin	369.417
+  nicotine	162.236
+  caffeine	194.194
+  vitamin	272.432
+  
+
+The boolean reader args interpret the strings "True", "true", or "1" a
+a true value, and "False", "false", or "0" for a false value. For
+example, the following will skip the first line of drugs.smi on the
+assumption that it's a header line::
+
+  % ./rdprops --columns 'id,MolWt' -R has_header=true tests/drugs.smi
+  id	MolWt
+  cocaine	303.358
+  quinine	324.424
+  lyseric acid	282.343
+  LSD	323.44
+  morphine	285.343
+  heroin	369.417
+  nicotine	162.236
+  caffeine	194.194
+  vitamin a	272.432
+  
+
+Batch size
+----------
+
+The 'nci_iupac_name' uses the NCI web service API to turn a SMILES
+into an IUPAC name. This is mostly a proof-of-concept API, and it's
+rather slow since I make a request for each record. (Does the NCI
+resolver have a batch mode API?) Still, let's give it a whirl::
+
+  % ./rdprops --columns 'id,nci_iupac_name' tests/drugs.smi
+  id	nci_iupac_name
+  Strychnine	*
+  cocaine	methyl 3-(benzoyloxy)-8-methyl-8-azabicyclo[3.2.1]octane-2-carboxylate
+  quinine	(5-ethenyl-1-azabicyclo[2.2.2]octan-7-yl)-(6-methoxyquinolin-4-yl)methanol
+  lyseric acid	*
+  LSD	*
+  morphine	*
+  heroin	*
+  nicotine	3-(1-methylpyrrolidin-2-yl)pyridine
+  caffeine	1,3,7-trimethylpurine-2,6-dione
+  vitamin a	*
+
+This took about 3 seconds, but you'll notice that there was no output
+until everything was ready. This is because propbox by default
+processes the records in batches of 1,000 records. It will compute the
+properties for the first 1,000 structures, then display the result,
+then compute the properties for the second 1,000 structures, then
+display those results, etc.
+
+I can ask it to process one record at a time using the `--batch-size`
+parameter::
+
+  % ./rdprops --columns 'id,nci_iupac_name' --batch-size 1 tests/drugs.smi 
+  id	nci_iupac_name
+  Strychnine	*
+  cocaine	methyl 3-(benzoyloxy)-8-methyl-8-azabicyclo[3.2.1]octane-2-carboxylate
+  quinine	(5-ethenyl-1-azabicyclo[2.2.2]octan-7-yl)-(6-methoxyquinolin-4-yl)methanol
+  lyseric acid	*
+  LSD	*
+  morphine	*
+  heroin	*
+  nicotine	3-(1-methylpyrrolidin-2-yl)pyridine
+  caffeine	1,3,7-trimethylpurine-2,6-dione
+  vitamin a	*
+
+
+(Propbox uses a '*' for records which had a problem. There is currently
+no way to use another symbol.)
+
+In the NCI case there is no timing difference between a batch size of
+1 and of 1,000 records because the propbox NCI client makes one
+request at a time. Batch mode exists because in some cases it's faster
+to process N molecules at once than to process each one
+individually. Eg, in the future propbox might be able to send all of
+the queries to the server in a single request, which would save a lot
+of network overhead.
+
+Use `--batch-size all` to process all of the structures in a single
+batch.
+
+
 
 
 Andrew Dalke / Dalke Scientific / dalke@dalkescientific.com

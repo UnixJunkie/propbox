@@ -6,6 +6,8 @@ from .simple_futures import (new_future as _new_future,
 # Propbox organizes dependencies between molecular property/descriptor
 # calculations.
 
+__version__ = "0.5"
+__version_tuple = (0, 5, 0)
 
 DEBUG = False
 

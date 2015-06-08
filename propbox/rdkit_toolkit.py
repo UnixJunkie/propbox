@@ -166,11 +166,11 @@ def _read_smiles(infile, id_tag, reader_args):
     delimiter = reader_args.get("delimiter", None)
     delimiter = _delimiter_method[delimiter]
     
-    titleLine = bool(reader_args.get("titleLine", False))
+    has_header = bool(reader_args.get("has_header", False))
     sanitize = bool(reader_args.get("sanitize", True))
 
     lineno = 1
-    if titleLine:
+    if has_header:
         next(infile)  # Will raise an exception if the file is empty
         lineno += 1
 

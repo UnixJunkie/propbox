@@ -1,0 +1,9 @@
+#!/usr/bin/env python
+
+import signal
+signal.signal(signal.SIGINT, signal.SIG_DFL)  # Allow ^C to kill the process.
+signal.signal(signal.SIGPIPE, signal.SIG_DFL) # Allow the output pipe to be closed
+
+from propbox import rdprops
+
+rdprops.main()

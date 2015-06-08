@@ -26,7 +26,7 @@ parser.add_argument("--id-tag", default=None,
                     help="tag containing the identifier (default is the title)")
 
 parser.add_argument("--format", choices=("smi", "sdf", "smi.gz", "sdf.gz"),
-                    default="smi",
+                    default=None,
                     help="input file format, otherwise the format comes from "
                     "the structure file extension, or 'smi' if unknown")
 

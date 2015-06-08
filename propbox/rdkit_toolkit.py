@@ -133,6 +133,7 @@ def get_input_format_from_source(source=None, format=None):
     else:
         filename = getattr(source, "name", "<unknown>")
 
+
     filename, ext = os.path.splitext(filename)
     ext = ext.lower()
     if ext == ".gz":
@@ -141,9 +142,9 @@ def get_input_format_from_source(source=None, format=None):
     else:
         compression = ""
 
-    if ext in ("smi", "ism", "isosmi"):
+    if ext in (".smi", ".ism", ".isosmi"):
         return SmilesFormat(compression)
-    elif ext in ("sdf", "sd", "mdl"):
+    elif ext in (".sdf", ".sd", ".mdl"):
         return SDFFormat(compression)
     else:
         # Don't know. Assume it's in SMILES format.
@@ -253,8 +254,8 @@ def _read_sdf(infile, id_tag, reader_args):
         yield id, mol
                 
 def read_ids_and_molecules(source=None, format=None, id_tag=None, reader_args=None):
-    format = get_input_format_from_source(format)
-        
+    format = get_input_format_from_source(source, format)
+
     if format.name in ("smi", "ism", "can", "usm"):
         f = _read_smiles
     elif format.name in ("sdf",):

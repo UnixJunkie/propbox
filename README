@@ -1,1 +1,66 @@
-  propbox 0.5
+                      propbox 0.5
+
+Summary
+=======
+
+Propbox is a Python package for computing molecular properties and
+models, and handing the dependencies between the calculations.
+
+The dependencies form a workflow. For example, the steps in building a
+consensus model may look like this:
+
+  - the input is a SMILES string
+  - turn the SMILES into a molecule
+  - desalt it and standardize the charge model
+  - use the clean molecule to compute logP,
+      molecular weight, and a few other desciptors
+  - use the descriptors to compute model-1,
+      model-2, and model-3
+  - use model-1, model-2, and model-3 to compute
+      a consensus model
+
+Rather than arrange the steps by hand, propbox uses a set of resolvers
+to fill out a table of properties. The table starts with the input
+data - one row per record. You ask the table for the output columns
+you want. If a property isn't available, the table asks the resolver
+to fill in the missing column. That operation may require additional
+data, in which case the resolver goes back to the table to ask for
+those columns. This process continues recursively until it gets to
+available data. (Or if there's a cycle, until Python's reaches its
+maximum recursion depth and throws an exception.) Each resolver then
+resolves the column data and the process unwinds until all of the
+needed columns are filled in.
+
+
+Installation
+============
+
+This package does not yet support the standard Python installer. You
+can run it from the current directory, or copy/move/link the 'propbox'
+subdirectory to your location of choice.
+
+License
+=======
+
+The propbox package is distributed under the MIT license. (See
+COPYING.) The package includes a distribution of the third-party
+pylru.py, which is copyright Jay Hutchinson and distributed under the
+GPLv2 or later. (See COPYING.pylru.)
+
+
+
+'rdprops' command-line tool
+===========================
+
+
+
+
+Workflow and Depenencies
+========================
+
+
+
+
+
+Andrew Dalke / Dalke Scientific / dalke@dalkescientific.com
+

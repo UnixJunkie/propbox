@@ -78,6 +78,49 @@ class TestMakeTableFromRecords(unittest.TestCase):
         self.assertEqual(ids, ["ID1", "ID2", "ID3", "ID4", "ID5",
                                "ID6", "ID7", "ID8", "ID9", "ID10"])
         
+class TestMakeTableFromColumns(unittest.TestCase):
+    def test_with_no_data(self):
+        table = propbox.make_table_from_columns(Constant(5), {})
+        values = table.get_values("n")
+        self.assertEqual(values, [])
+        self.assertEqual(len(table), 0)
+        
+    def test_with_one_record(self):
+        table = propbox.make_table_from_columns(Constant(5), {"smiles": ["C"]})
+        values = table.get_values("n")
+        self.assertEqual(values, [5])
+        self.assertEqual(len(table), 1)
 
+    def test_with_two_records(self):
+        table = propbox.make_table_from_columns(
+            Length(), {"smiles": ["C", "CDE"]})
+
+        self.assertEqual(len(table), 2)
+        values = table.get_values("len")
+        self.assertEqual(values, [1, 3])
+
+    def test_with_missing_field(self):
+        with self.assertRaisesRegexp(
+                ValueError,
+                r"Column length mismatch: 'MW' has length 1 while 'smiles' has length 2"):
+            propbox.make_table_from_columns(
+                Constant(11), {"smiles": ["C", "CC"],
+                               "MW": [1.2]})
+        
+    def test_with_extra_field(self):
+        with self.assertRaisesRegexp(
+                ValueError,
+                r"Column length mismatch: 'MW' has length 3 while 'smiles' has length 2"):
+            propbox.make_table_from_columns(
+                Constant(11), {"smiles": ["C", "CC"],
+                               "MW": [1.2, 3.4, 5.6]})
+        
+    def test_auto_id_creation(self):
+        table = propbox.make_table_from_columns(None, {"blah": [None]*10})
+        ids = table.get_values("id")
+        self.assertEqual(ids, ["ID1", "ID2", "ID3", "ID4", "ID5",
+                               "ID6", "ID7", "ID8", "ID9", "ID10"])
+    
+    
 if __name__ == "__main__":
     unittest.main()

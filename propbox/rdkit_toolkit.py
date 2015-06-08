@@ -1,7 +1,9 @@
 from __future__ import absolute_import
 
-from rdkit import Chem
 import os
+import sys
+
+from rdkit import Chem
 
 # A simple subset of what chemfp's rdkit_toolkit can do.
 
@@ -116,7 +118,7 @@ _supported_formats = {
     
 def get_input_format_from_source(source=None, format=None):
     if format is not None:
-        if not isinstance(source, basestring):
+        if not isinstance(format, basestring):
             return format
         try:
             klass, arg = _supported_formats[format]
@@ -266,7 +268,7 @@ def read_ids_and_molecules(source=None, format=None, id_tag=None, reader_args=No
     infile, close = _open(source, format.compression)
         
     if close is None:
-        return f(infile, id_ag, reader_args)
+        return f(infile, id_tag, reader_args)
     else:
         return _with_close(f, infile, close, id_tag, reader_args) 
 

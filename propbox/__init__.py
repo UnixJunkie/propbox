@@ -66,7 +66,7 @@ class ResolverError(PropboxError):
         if self.table_name is None:
             name = self.column_name
         else:
-            name = "%s.%s" % (self.table_name, self.column)
+            name = "%s.%s" % (self.table_name, self.column_name)
         # Recursively expand to get a description of full
         # path that lead to the actual exception.
         if isinstance(self.exception, ResolverError):

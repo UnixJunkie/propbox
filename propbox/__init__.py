@@ -217,7 +217,7 @@ class ParentTableResolver(Resolver):
 
         self.output_names = list(input_map) + resolver.output_names
 
-    def resolve_column(self, name, subtable):
+    def resolve_column(self, name, table):
         if name in self.input_map:
             # Forward to the parent table
             parent_name = self.input_map[name]
@@ -288,7 +288,7 @@ class Module(Resolver):
                 config = config,
                 table_name = subtable_name,
                 )
-            table.set_cache(self.module_name, subtable)
+            table.set_cache_value(self.module_name, subtable)
 
         name_in_module = self.output_map[name]
         self.resolver.resolve_column(name_in_module, subtable)
@@ -296,7 +296,7 @@ class Module(Resolver):
         futures = subtable.get_futures(name_in_module)
         futures = wrap_future_exceptions(futures, table.table_name, name)
 
-        table.set_futures(column, futures)
+        table.set_futures(name, futures)
 
 
 

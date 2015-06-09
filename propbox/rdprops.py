@@ -97,11 +97,34 @@ def _open_output(destination):
         f = open(destination, "w")
         return f, f.close
 
-def import_resolver(resolver_name):
-    module = __import__(resolver_name, globals(), {}, 0)
+# From http://stackoverflow.com/questions/452969/does-python-have-an-equivalent-to-java-class-forname
+# which in turn comes from unittest.TestLoader.loadTestsFromName .
+
+def get_object(name):
+    """Retrieve a python object, given its dotted.name."""
+    parts = name.split('.')
+    parts_copy = parts[:]
+    while parts_copy:
+        try:
+            module = __import__('.'.join(parts_copy), globals(),{}, [], 0)
+            break
+        except ImportError:
+            del parts_copy[-1]
+            if not parts_copy:
+                raise
+    parts = parts[1:]
+
     obj = module
-    for name in resolver_name.split("."):
-        obj = getattr(obj, name)
+    try:
+        for part in parts:
+            parent, obj = obj, getattr(obj, part)
+    except AttributeError, err:
+        raise ImportError("Cannot import %r: %r" % (err,))
+
+    return obj
+    
+def import_resolver(resolver_name):
+    obj = get_object(resolver_name)
     if not isinstance(obj, Resolver):
         sys.stderr.write("%r does not appear to be a resolver\n" % (resolver_name,))
     return obj

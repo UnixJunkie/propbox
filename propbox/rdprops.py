@@ -158,8 +158,8 @@ def main(argv=None):
     else:
         headers = headers.split(",")
         if len(headers) != len(columns):
-            args.error("--headers defines %d fields while --columns defines %d"
-                       % (len(headers), len(columns)))
+            parser.error("--headers defines %d fields while --columns defines %d"
+                         % (len(headers), len(columns)))
     
     for name in columns:
         if name not in known_names:

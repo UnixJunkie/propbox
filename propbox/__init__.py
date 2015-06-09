@@ -356,7 +356,7 @@ class Calculator(Resolver):
             output_descriptors = OutputDescriptors(
                 column_name, table.table_name, valid_record_indices, self.output_names, result_columns)
 
-            self.calculate(table, name, input_values, output_descriptors)
+            self.calculate(name, table, input_values, output_descriptors)
 
         if valid_record_indices:
             # Looks like the calculation code didn't go to completion.
@@ -491,7 +491,7 @@ class CalculateName(Calculator):
             self.input_names, self.output_names[0], self.f, self.docstring,
             self.include_table, self.resolver_name)
     
-    def calculate(self, table, name, input_values, output_descriptors):
+    def calculate(self, name, table, input_values, output_descriptors):
         f = self.f
         include_table = self.include_table
         for values in input_values:
@@ -525,7 +525,7 @@ class CalculateNames(Calculator):
             self.input_names, self.output_names, self.f, self.docstring,
             self.include_table, self.resolver_name)
     
-    def calculate(self, table, name, input_values, output_descriptors):
+    def calculate(self, name, table, input_values, output_descriptors):
         f = self.f
         include_table = self.include_table
         for values in input_values:

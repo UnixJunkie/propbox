@@ -262,8 +262,24 @@ the expected meanings.
 Use an SD tag as a title
 ------------------------
 
+By default propbox will use the title line of the SD file as the
+identifier. Sometimes the identifier is in one of the tags, as ChEBI
+and older ChEMBL data sets, or if you want to use the InChI or other
+primary key stored in a tag.
 
+For example, the title line in CHEMBL11862.sdf is "CHEMBL11862"::
 
+  % ./rdprops tests/CHEMBL11862.sdf
+  id	smiles	MolWt
+  CHEMBL11862	Oc1cc2c(cc1O)CNCC2	165.192
+
+while the SD tag 'nci_iupac_name' contains the IUPAC name that I got
+from passing the structure over to NCI::
+
+  % ./rdprops --id-tag nci_iupac_name tests/CHEMBL11862.sdf 
+  id	smiles	MolWt
+  1,2,3,4-tetrahydroisoquinoline-6,7-diol	Oc1cc2c(cc1O)CNCC2	165.192
+  
 
 
 
@@ -435,6 +451,334 @@ of network overhead.
 
 Use `--batch-size all` to process all of the structures in a single
 batch.
+
+
+Add a resolver
+--------------
+
+Use `-r` or `--resolver` to add a resolver to the built-in resolver.
+
+I'll cover the details in the next section. For an example of how it
+works, I'll create a simple model based on the molecular weight and
+the number of hydrogen bond donors. The descriptor will be called
+'model', and located in a file called "model.py" in the current
+directory (or somewhere else on the Python path)::
+
+  % cat model.py
+  
+  from propbox import calculate, collect_resolvers
+  
+  @calculate()
+  def calc_model(MolWt, NumHDonors):
+    return MolWt * 12.34 / (NumHDonors + 1)
+  
+  resolver = collect_resolvers()
+
+This is a non-standard resolver, so I need to tell rdprops the path
+for how to load it::
+
+  % ./rdprops --columns 'id,model' -r model.resolver tests/CHEMBL11862.sdf
+  id	model
+  CHEMBL11862	509.61732
+
+
+To double-check, I'll get the molecular weight and number of hbond
+donors to do the math myself::
+
+  % ./rdprops --columns 'id,MolWt,NumHDonors,model' -r model.resolver tests/CHEMBL11862.sdf
+id	MolWt	NumHDonors	model
+CHEMBL11862	165.192	3	509.61732
+
+And what do you know, it matches!
+
+  >>> 165.192 * 12.34 / (3 + 1)
+  509.61732000000001
+  
+
+The propbox resolver framework
+==============================
+
+
+Propbox is built around two concepts: a table and a resolver. The rows
+of the table are structure records, and the columns are molecular
+properties, referenced by name. A resolver is an object which can fill
+in columns of a table. A resolver may get columns from the table in
+order to do its job.
+
+Create a table
+--------------
+
+There are two ways to create a table; by rows ("records") or by
+columns. I'll create a table with no resolver and a single column,
+"smiles", with some SMILES data::
+
+  >>> import propbox
+  >>> table = propbox.make_table_from_columns(None, {"smiles": ["C", "O=O"]})
+  >>> table.get_values("smiles")
+  ['C', 'O=O']
+
+Missing identifiers will be created automatically::
+
+  >>> table.get_values("id")
+  ['ID1', 'ID2']
+
+or you can specify the identifiers yourself::
+
+  >>> table = propbox.make_table_from_columns(None, 
+  ...   {"smiles": ["C", "O=O"], "id": ["methane", "water"]})
+  >>> table.get_values("smiles")
+  ['C', 'O=O']
+  >>> table.get_values("id")
+  ['methane', 'water']
+  
+Use make_table_from_records() if you have per-record dictionary data::
+
+  >>> table = propbox.make_table_from_records(None,
+  ...   [{"smiles": "O=O", "id": "water"}, {"smiles": "c1ccccc1O", "id": "phenol"}])
+  >>> table.get_values("smiles")
+  ['O=O', 'c1ccccc1O']
+  >>> table.get_values("id")
+  ['water', 'phenol']
+
+
+I used None as the resolver, but the None object doesn't support the
+resolver protocol, so if I try to get a column that doesn't yet exist,
+I'll get the following::
+
+  >>> table.get_values("MW")
+  Traceback (most recent call last):
+    File "<stdin>", line 1, in <module>
+    File "propbox/__init__.py", line 709, in get_values
+      futures = self.get_futures(name)
+    File "propbox/__init__.py", line 693, in get_futures
+      self.resolver.resolve_column(name, self)
+  AttributeError: 'NoneType' object has no attribute 'resolve_column'
+
+
+Define a resolver
+-----------------
+
+Here's a resolver which returns a constant value::
+
+  from __future__ import print_function
+  import propbox
+  
+  class Constant(propbox.Resolver):
+      output_names = ["value"]
+  
+      def __init__(self, value):
+          self.value = value
+  
+      def resolve_column(self, name, table):
+          table.set_values("value", [self.value] * len(table))
+  
+  table = propbox.make_table_from_records(Constant(4), [{}, {}])
+  print("ids", table.get_values("id"))
+  print("values", table.get_values("value"))
+  
+
+This creates the following output::
+
+  ids ['ID1', 'ID2']
+  values [4, 4]
+
+How this works is, the table doesn't know about the 'value' column, so
+it asks the resolver to resolve the column 'value'. The table passes
+itself as the table, so the resolver can use the table to get or set
+data.
+
+The Constant resolver uses len(table) to get the number of rows in the
+table -- two in this case -- and create the list [4, 4], which it then
+uses to set the table column named 'value', which is then available to
+the table.
+
+Thes 'output_names' attribute contains a list of the column names that
+the resolver can compute. It isn't actually used in this case, since
+the table will ask the resolver to handle any unknown column. I could,
+for example, ask for 'xyzzy' and it would call the resolver::
+
+  table = propbox.make_table_from_records(Constant(4), [{}, {}])
+  print("ids", table.get_values("id"))
+  print("xyzzy", table.get_values("xyzzy"))
+
+
+However, the table does double-check that the resolver adds the
+requested column, so the above will generate the following error::
+
+  ids ['ID1', 'ID2']
+  Traceback (most recent call last):
+    File "tmp.py", line 15, in <module>
+      print("xyzzy", table.get_values("xyzzy"))
+    File "/Users/dalke/cvses/propbox/propbox/__init__.py", line 709, in get_values
+      futures = self.get_futures(name)
+    File "/Users/dalke/cvses/propbox/propbox/__init__.py", line 698, in get_futures
+      % (self.resolver, name))
+  AssertionError: Resolver <__main__.Constant object at 0x1007e74d0> did not set values for column 'xyzzy'
+
+
+
+Define a Propbox
+----------------
+
+A Propbox is a resolver which contains other resolvers. It uses the
+'output_names' of the other resolvers to figure out which resolver to
+use. For example, I'll modify the Constant resolver so I can specify
+which column it will set::
+
+  from __future__ import print_function
+  import propbox
+  
+  class Constant(propbox.Resolver):
+      def __init__(self, descriptor, value):
+          self.value = value
+          self.descriptor = descriptor
+          self.output_names = [descriptor]
+  
+      def resolve_column(self, name, table):
+          table.set_values(self.descriptor, [self.value] * len(table))
+  
+
+then create a Propbox which contains two Constants; one which sets
+'value' to 8 and the other which sets 'xyzzy' to 13::
+
+  resolver = propbox.Propbox()
+  resolver.add_resolver(Constant("value", 8))
+  resolver.add_resolver(Constant("xyzzy", 13))
+  
+and finally create a table which uses that Propbox resolver::
+
+  table = propbox.make_table_from_records(resolver, [{}, {}])
+  print("value", table.get_values("value"))
+  print("xyzzy", table.get_values("xyzzy"))
+  print("unknown", table.get_values("unknown"))
+  
+
+When I run it, I get the following output::
+
+  value [8, 8]
+  xyzzy [13, 13]
+  Traceback (most recent call last):
+    File "tmp.py", line 22, in <module>
+      print("unknown", table.get_values("unknown"))
+    File "/Users/dalke/cvses/propbox/propbox/__init__.py", line 709, in get_values
+      futures = self.get_futures(name)
+    File "/Users/dalke/cvses/propbox/propbox/__init__.py", line 693, in get_futures
+      self.resolver.resolve_column(name, self)
+    File "/Users/dalke/cvses/propbox/propbox/__init__.py", line 171, in resolve_column
+      raise PropboxKeyError(self, name)
+  propbox.PropboxKeyError: unknown
+
+In case you were wondering, the PropboxKeyError inherits from the
+regular KeyError, as well as from propbox.PropboxError.
+
+
+A resolver that uses the table
+------------------------------
+
+The Constant resolver is pretty boring. What about a resolver which
+returns the length of the SMILES string, stored in the 'smiles'
+column, and sets the column 'len'?::
+
+  from __future__ import print_function
+  import propbox
+  
+  class Len(propbox.Resolver):
+      output_names = ["len"]
+      def resolve_column(self, name, table):
+          smiles_list = table.get_values("smiles")
+          table.set_values("len", [len(smiles) for smiles in smiles_list])
+  
+  
+  resolver = Len()
+  
+  table = propbox.make_table_from_columns(
+      resolver, {"smiles": ["C", "C#N", "c1ccccc1O"]})
+                                          
+  print(table.get_values("len"))
+
+The output from this is::
+
+  [1, 3, 9]
+
+which I think you expected.
+
+What's new here is that the resolver asked the table to get the
+"smiles" column. This is a recursive call, since the table was the one
+to call the resolver in the first place.
+
+The recursion might go several levels deep. I'll also create a Len2,
+which doubles the value of "len". Since I have to resolvers, I'll need
+to put them into a Propbox::
+
+  from __future__ import print_function
+  import propbox
+  
+  class Len(propbox.Resolver):
+      output_names = ["len"]
+      def resolve_column(self, name, table):
+          smiles_list = table.get_values("smiles")
+          table.set_values("len", [len(smiles) for smiles in smiles_list])
+  
+  class DoubleLen(propbox.Resolver):
+      output_names = ["len2"]
+      def resolve_column(self, name, table):
+          len_list = table.get_values("len")
+          table.set_values("len2", [value*2 for value in len_list])
+  
+  resolver = propbox.Propbox([Len(), DoubleLen()])
+  
+  table = propbox.make_table_from_columns(
+      resolver, {"smiles": ["C", "C#N", "c1ccccc1O"]})
+  
+  print(table.get_values("len2"))
+
+
+Here's what happened:
+
+  - The column "len2" does not exist, so the table asks the
+      Propbox resolver to fill it in;
+  - The Propbox resolver used the output_names to figure out
+      that the DoubleLen resolver could resolve that column.
+  - The DoubleLen resolver needs the values for the "len" column
+      from the table;
+  - The column 'len' doesn't exist, so the table asks the
+      Propbox resolver to fill it in;
+  - The Propbox resolver used the output_names to figure out
+      that the Len resolver could resolve that column;
+  - The Len resolver needs the values for the "smiles" column
+      from the table;
+  - The table returns "smiles" column;
+  - The Len resolver computes the string lengths and sets the
+      values for the "len" column;
+  - The DoubleLen resolver doubles those values, and sets the
+      "len2" column;
+  - The calculations are complete and returned to the caller.
+
+
+All of the intermediate values are stored in the table in case they
+are needed for additional calculations.
+
+
+Futures
+-------
+
+
+
+
+Handling errors
+---------------
+
+Calculator
+----------
+
+
+CalculateName / CalculateNames
+------------------------------
+
+
+Decorators for simple functions
+-------------------------------
+
 
 
 

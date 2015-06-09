@@ -729,7 +729,7 @@ class PropertyTable(object):
         self.table[name] = [_new_future(value) for value in values]
         
 
-    def get_future_records(self, names):
+    def get_future_rows(self, names):
         table_columns = []
         for name in names:
             if name not in self.table:
@@ -741,24 +741,19 @@ class PropertyTable(object):
                     "Resolver %r did not set descriptor for column %r"
                     % (self.resolver, name))
 
-        records = []
-        for values in zip(*table_columns):
-            record = dict(zip(names, values))
-            records.append(record)
-        return records
+        return zip(*table_columns)
 
-
-    def get_records(self, names, exception_value=None):
-        new_records = []
-        for record in self.get_future_records(names):
-            new_record = {}
-            for k, v in record.iteritems():
-                if v.exception() is not None:
-                    new_record[k] = exception_value
+    def get_rows(self, names, exception_value=None):
+        new_rows = []
+        for row in self.get_future_rows(names):
+            new_row = []
+            for column in row:
+                if column.exception() is not None:
+                    new_row.append(exception_value)
                 else:
-                    new_record[k] = v.result()
-            new_records.append(new_record)
-        return new_records
+                    new_row.append(column.result())
+            new_rows.append(new_row)
+        return new_rows
 
     def add_future_records(self, future_records):
         if len(future_records) != self._num_records:

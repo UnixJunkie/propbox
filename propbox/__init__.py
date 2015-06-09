@@ -694,8 +694,8 @@ class PropertyTable(object):
         try:
             return self.table[name]
         except KeyError:
-            raise AssertionError("Resolver %r did not set descriptor for column %r"
-                                 % (self.resolver, column))
+            raise AssertionError("Resolver %r did not set values for column %r"
+                                 % (self.resolver, name))
 
     def set_futures(self, column, futures):
         if column in self.table:

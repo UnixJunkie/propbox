@@ -762,26 +762,933 @@ are needed for additional calculations.
 Futures
 -------
 
+What if there was an error during the calculation? For that matter,
+how does a resolver even indicate an error?
+
+You'll need to understand 'futures' to understand how errors work in
+propbox.
+
+A future is something which wraps a return value, or raised
+exception. It's often used in modern asynchronous I/O libraries,
+including Python 3.4, where it is used as a placeholder for the actual
+return value, which will be available in the future. (It's called a
+'promise' in some libraries.)
+
+Probox is not asynchronous, though I want it to go that way. I use the
+'future' concept as a way to keep track of if something was a return
+value or an exception.
+
+Here's what it looks like, using part of the propbox API that should
+only be used by resolvers. I'll store the value 12 as if it were a
+successfully computed descriptor::
+
+  >>> from propbox import simple_futures
+  >>> future = simple_futures.new_future(12)
+  >>> future
+  <propbox.simple_futures.Future object at 0x100666490>
+  >>> future.result()
+  12
+
+This being Python, I can store anything in the future's result::
+
+  >>> future = simple_futures.new_future("twelve")
+  >>> future.result()
+  'twelve'
+
+I can even store an exception instance as the value::
+
+  >>> future = simple_futures.new_future(ValueError("must be a string"))
+  >>> future.result()
+  ValueError('must be a string',)
 
 
+What if I have a "real" exception, that is, something which shouldn't
+be treated as a return value? I'll create a future that contains an
+exception::
 
-Handling errors
----------------
+  >>> future = simple_futures.new_future_exception(ValueError("must be a string"))
+  >>> future.result()
+  Traceback (most recent call last):
+    File "<stdin>", line 1, in <module>
+    File "propbox/simple_futures.py", line 34, in result
+      raise self._exception
+  ValueError: must be a string
+
+I asked the future for its result, but since it contained an
+exception, it raised the exception.
+
+(One limitation is that the exception no longer has stack
+information. If you enable propbox.DEBUG=1 then you'll see the stack
+trace printed to stderr when a resolver raises an unhandled exception.)
+
+If you want the exception value, without going through the try/except
+mechanism, then ask the future for it::
+
+  >>> future.exception()
+  ValueError('must be a string',)
+
+This will return None if there was no exception.
+
+
+Setting descriptor exceptions
+-----------------------------
+
+Two sections earlier I used get_values() and set_values() to get and
+set the column values. If there's an error then get_values() by
+default will use None as a placeholder error value, and there's no way
+to use set_values() to specify an error.
+
+The get_values()/set_values() functions are really just wrappers
+around the underlying futures data. You can access the futures
+directly with get_futures() and set_futures(). In the following, I'll
+modify the "len" resolver so it gives an error if the SMILES string
+contains the letter 'O'::
+
+
+  from __future__ import print_function
+  import propbox
+  from propbox import simple_futures
+  
+  class Len(propbox.Resolver):
+      output_names = ["len"]
+      def resolve_column(self, name, table):
+          smiles_list = table.get_values("smiles")
+          futures = []
+          for smiles in smiles_list:
+              if "O" in smiles:
+                  err = ValueError("No 'O's allowed: %r" % (smiles,))
+                  future = simple_futures.new_future_exception(err)
+              else:
+                  future = simple_futures.new_future(len(smiles))
+              futures.append(future)
+          table.set_futures("len", futures)
+  
+  resolver = Len()
+  
+  table = propbox.make_table_from_columns(
+      resolver, {"smiles": ["C", "C#N", "c1ccccc1O"]})
+  
+  print(table.get_values("len"))
+
+The result from when I run this is::
+
+  [1, 3, None]
+
+because None is the placeholder error value. I can change that to
+something else. In the following I use zero::
+
+  print(table.get_values("len", 0))
+
+which creates the output::
+
+  [1, 3, 0]
+
+
+Exception chaining (advanced)
+-----------------------------
+
+This is an advanced topic. In almost all cases you can use the
+'Calculator' class in the next section, which handles exception
+chaining automatically.
+
+Suppose you want a "doubled" property, which is twice the "len"
+property. What if "len" has an error? Since "len" is supposed to be a
+number, it's easy to check if it's the None value, and do something
+different in that case. In the following, the 'Len' class is unchanged
+from the previous section. What's new is the 'DoubleLen' class, the
+propbox which includes both Len and DoubleLen, and the output, where
+this time I show the future's exception for each record::
+
+  from __future__ import print_function
+  import propbox
+  from propbox import simple_futures
+  
+  class Len(propbox.Resolver):
+      output_names = ["len"]
+      def resolve_column(self, name, table):
+          smiles_list = table.get_values("smiles")
+          futures = []
+          for smiles in smiles_list:
+              if "O" in smiles:
+                  err = ValueError("No 'O's allowed: %r" % (smiles,))
+                  future = simple_futures.new_future_exception(err)
+              else:
+                  future = simple_futures.new_future(len(smiles))
+              futures.append(future)
+          table.set_futures("len", futures)
+  
+  # This version does not implement exception chaining
+  class DoubleLen(propbox.Resolver):
+      output_names = ["doubled"]
+      def resolve_column(self, name, table):
+          len_list = table.get_values("len")
+          futures = []
+          for len_value in len_list:
+              if len_value is None:
+                  err = Exception("No 'len' available")
+                  future = simple_futures.new_future_exception(err)
+              else:
+                  future = simple_futures.new_future(len_value*2)
+              futures.append(future)
+          table.set_futures("doubled", futures)
+          
+  resolver = propbox.Propbox([Len(), DoubleLen()])
+  
+  table = propbox.make_table_from_columns(
+      resolver, {"smiles": ["C", "C#N", "c1ccccc1O"]})
+  
+  print("id  exception")
+  for id, double_future in zip(table.get_values("id"),
+                               table.get_futures("doubled")):
+      print(id, double_future.exception())
+
+This gives the following output::
+
+  id  exception
+  ID1 None
+  ID2 None
+  ID3 No 'len' available
+  
+It would be nice to know *why* 'len' isn't available. Propbox
+implements exception chaining, which is where one resolver exception
+can wrap another, all the way back to the actual exception that caused
+the problem.
+
+To do that correctly, I'll need to make two changes. The first is to
+wrap the ValueException of the Len class inside of a ResolverError
+exception, so that callers know the descriptor that caused the
+original problem. That's one new line of code in the following::
+
+  class Len(propbox.Resolver):
+      output_names = ["len"]
+      def resolve_column(self, name, table):
+          smiles_list = table.get_values("smiles")
+          futures = []
+          for smiles in smiles_list:
+              if "O" in smiles:
+                  err = ValueError("No 'O's allowed: %r" % (smiles,))
+                  # I added the next line for better exception chaining.
+                  # It will include the name of the descriptor that has the problem.
+                  err = propbox.ResolverError(err, table.table_name, "len")
+                  future = simple_futures.new_future_exception(err)
+              else:
+                  future = simple_futures.new_future(len(smiles))
+              futures.append(future)
+          table.set_futures("len", futures)
+
+
+The second is to change Doubled to use get_futures() instead of
+get_values(), and if one of the 'len' futures has an exception, to
+wrap it insides of another ResolverError::
+
+
+  class DoubleLen(propbox.Resolver):
+      output_names = ["doubled"]
+      def resolve_column(self, name, table):
+          len_futures = table.get_futures("len")
+          futures = []
+          for len_future in len_futures:
+              prev_exception = len_future.exception()
+              if prev_exception is None:
+                  # There was no error
+                  len_value = len_future.result()
+                  future = simple_futures.new_future(len_value*2)
+              else:
+                  # Create the chain.
+                  err = propbox.ResolverError(prev_exception, table.table_name, "doubled")
+                  future = simple_futures.new_future_exception(err)
+              futures.append(future)
+          table.set_futures("doubled", futures)
+
+The resulting code now generates::
+
+  id  exception
+  ID1 None
+  ID2 None
+  ID3 doubled -> len: ValueError("No 'O's allowed: 'c1ccccc1O'",)
+
+This is more helpful because it says that 'doubled' failed because
+'len' failed because of a ValueError.
+
+Use 'get_original_exception()' if you only care about the actual
+exception that caused the problem, and not the full resolver chain, as
+in the following variation, which only prints those records with an
+error::
+
+  print("id  exception")
+  for id, double_future in zip(table.get_values("id"),
+                               table.get_futures("doubled")):
+      exception = double_future.exception()
+      if exception is not None:
+          print(id, exception.get_original_exception())
+
+
+which produces the following output::
+
+  id  exception
+  ID3 No 'O's allowed: 'c1ccccc1O'
+
 
 Calculator
 ----------
+
+The previous section showed the nitty-gritty of how to handle and
+report errors during a calculation. For the most part, you don't need
+to do that sort of low-level code. Instead, use the 'Calculator'
+class. Here's an example::
+
+
+  from __future__ import print_function
+  import propbox
+  from propbox import simple_futures
+  
+  class Len(propbox.Calculator):
+      input_names = ["smiles"]
+      output_names = ["len"]
+      def calculate(self, name, table, input_values, output):
+          for (smiles,) in input_values:
+              if "O" in smiles:
+                  output.add_exception(ValueError("No 'O's allowed: %r" % (smiles,)))
+              else:
+                  output.add_result(len(smiles))
+                  
+  class DoubleLen(propbox.Calculator):
+      input_names = ["len"]
+      output_names = ["doubled"]
+      def calculate(self, name, table, input_values, output):
+          for (len_value,) in input_values:
+            output.add_result(len_value*2)
+          
+  resolver = propbox.Propbox([Len(), DoubleLen()])
+  
+  table = propbox.make_table_from_columns(
+      resolver, {"smiles": ["C", "C#N", "c1ccccc1O"]})
+  
+  print("id  exception")
+  for id, doubled_future in zip(table.get_values("id"),
+                               table.get_futures("doubled")):
+      print(id, doubled_future.exception() or doubled_future.result())
+  
+
+If you compare it to the previous section you'll see it's much
+shorter. If you skipped the previous section, then great! You didn't
+need to read it to understand this section.
+
+(For that matter, you can skip to 'Decorators for simple functions'
+for an even easier way to handle this code.)
+
+The 'input_names' contains a list of columns that will be passed in as
+input, and the calculator must set values for all of the
+'output_names'. This is a bit more strict than a normal resolver,
+which doesn't need to list its input names, and only needs to compute
+the requested output name.
+
+The Calculator's own resolve_column() will filter out the inputs which
+contain an exception, and pass only the actual values to the
+'calculate()' method. By "actual values" I mean there aren't even
+placeholders for the error values. If one of the inputs causes an
+exception then the Calculator will automatically set up the resolver
+chain.
+
+The values are passed to the "calculate()" function as a list of
+lists, where the order depends on the order in input_names. For
+example, in the following::
+
+  class Example(propbox.Calculator):
+      input_names = ["smiles", "doubled"]
+      output_names = ["example"]
+      def calculate(self, name, table, input_values, output):
+          print("input_values", input_values)
+          for (smiles, doubled) in input_values:
+            output.add_result("2*len(%r)=%d" % (smiles, doubled))
+
+the inputs are 'smiles' and 'doubled', which are passed in as:
+
+  input_values [['C', 2], ['C#N', 6]]
+
+This is row order, so the first element contains the columns for the
+first non-error record, the second for the second non-error record,
+and so on.
+
+
+It's a bit tricky to remember that a single input name still gets a
+list of lists, even though its a single element list. I use "for
+(len_value,) in" in the following as an explicit reminder that I am
+using a term from a single element list::
+
+  class DoubleLen(propbox.Calculator):
+      input_names = ["len"]
+      output_names = ["doubled"]
+      def calculate(self, name, table, input_values, output):
+          for (len_value,) in input_values:
+            output.add_result(len_value*2)
+
+Otherwise it's very easy to make a mistake and do "for len_value in input_values".
+
+The 'name' and 'table' should look familiar by this time. While you
+can use the table to get or set columns, you really shouldn't because
+your code will end up interfering with the Calculator code. It's there
+in case the calculator needs to access any of the table configuration
+information, or needs to get/set a cache value on the table.
+
+
+The 'output' term is special. Use it to specify information for the
+current record number, or specify information for all of the remaining
+records.
+
+The 'add_result()' method can be used when output_names contains only
+a single name. add_result() sets the corresponding column for the
+current record, then advances to the next record.
+
+Use 'add_results()' when there are more outputs. The function takes
+the result values as a list or tuple, and sets the corresponding
+futures. Here's an example of it in use::
+
+  class Scaling(propbox.Calculator):
+      input_names = ["len"]
+      output_names = ["tripled", "third"]
+      def calculate(self, name, table, input_values, output):
+          for (n,) in input_values:
+              output.add_results((n*3 ,n/3.0))
+
+In this case the "n*3" sets the 'tripled' column, and 'n/3.0' sets the
+'third' column.
+
+
+Sometimes it's more convenient to set all of the results at once,
+which you can do with the 'add_column_results()' method::
+
+  class Scaling(propbox.Calculator):
+      input_names = ["len"]
+      output_names = ["tripled", "third"]
+      def calculate(self, name, table, input_values, output):
+          tripled_list = []
+          third_list = []
+          for (n,) in input_values:
+              tripled_list.append(n*3)
+              third_list.append(n/3.0)
+          output.add_column_results( (tripled_list, third_list) )
+
+However, this doesn't appear to be one of those cases where the result
+is simpler.
+
+
+You saw already how to tell the output to use an exception for a given
+row, by using the 'add_exception()' method::
+
+  class Len(propbox.Calculator):
+      input_names = ["smiles"]
+      output_names = ["len"]
+      def calculate(self, name, table, input_values, output):
+          for (smiles,) in input_values:
+              if "O" in smiles:
+                  output.add_exception(ValueError("No 'O's allowed: %r" % (smiles,)))
+              else:
+                  output.add_result(len(smiles))
+
+You can also specify a futures, either for a record via 'add_futures'
+or for all of the columns via 'add_column_futures'.
+
 
 
 CalculateName / CalculateNames
 ------------------------------
 
+You may have functions which you want to turn into propbox
+descriptors. The CalculateName and CalculateNames classes are
+subclasses of Calculator which know how to call a function to compute a
+property or a set of properties, respectively.
+
+For example, here are three functions that might be useful for
+propbox::
+
+  from rdkit import Chem
+  
+  def smilin(smiles):
+      mol = Chem.MolFromSmiles(smiles)
+      if mol is None:
+          raise ValueError("RDKit cannot parse the SMILES %r" % (smiles,))
+      return mol
+  
+  def num_heavies(mol):
+      return sum(1 for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1)
+  
+  def heavy_range(mol):
+      "Return the lightest and heaviest element numbers of the heavy atoms"
+      atomic_nums = []
+      for atom in mol.GetAtoms():
+          atomic_num = atom.GetAtomicNum()
+          if atomic_num > 1:
+              atomic_nums.append(atomic_num)
+      if not atomic_nums:
+          return (0, 0)
+      return min(atomic_nums), max(atomic_nums)
+  
+
+The first two only return a single value, so I'll use a CalculateName
+instance for them. The last returns two values, so I'll use a
+CalculateNames for them::
+
+  import propbox
+  
+  resolver = propbox.Propbox([
+      propbox.CalculateName(["smiles"], "mol", smilin),
+      propbox.CalculateName(["mol"], "nHEAVIES", num_heavies),
+      propbox.CalculateNames(["mol"], ["LIGHTEST_HEAVY", "HEAVIEST_HEAVY"], heavy_range),
+      ])
+  
+The first parameter is the input_names list. The second parameter is
+the output name (for CalculateName) or the list of output names (for
+CalculateNames). The third parameter is the function to call.
+
+I'll use that resolver to make a table::
+
+  table = propbox.make_table_from_columns(
+      resolver, {"smiles": ["C", "C#N", "Q", "c1ccccc1O", "[U](F)(F)(F)(F)(F)F"]})
+
+then use the table to generate CSV output, be default as a tab separated file::
+
+  import sys
+  table.save(sys.stdout, ["id", "nHEAVIES", "LIGHTEST_HEAVY", "HEAVIEST_HEAVY"])
+
+The output in this case is::
+
+  [14:20:24] SMILES Parse Error: syntax error for input: Q
+  id	nHEAVIES	LIGHTEST_HEAVY	HEAVIEST_HEAVY
+  ID1	1	6	6
+  ID2	2	6	7
+  ID3	*	*	*
+  ID4	7	6	8
+  ID5	7	9	92
+
+
+Suppose though you want this in 'excel' format, which uses commas
+instead of tabs, and knows how to quote terms that contain a
+comma. And suppose you wanted to use '???' when the nHEAVIES could not
+be computed, and 'n/a' for when the element range could not be
+computed. In that case, use the following::
+
+  import sys
+  table.save(sys.stdout, ["id", "nHEAVIES", "LIGHTEST_HEAVY", "HEAVIEST_HEAVY"],
+             dialect="excel", missing_values=["x", "???", "n/a", "n/a"])
+
+which generates::
+
+  id,nHEAVIES,LIGHTEST_HEAVY,HEAVIEST_HEAVY
+  ID1,1,6,6
+  ID2,2,6,7
+  ID3,???,n/a,n/a
+  ID4,7,6,8
+  ID5,7,9,92
+
 
 Decorators for simple functions
 -------------------------------
 
+The previous section assumed that you couldn't modify the code that
+computed the property values. If on the other hand you can modify
+them, then the 'propbox.calculate' decorator will create a
+CalculateName (if output_names is a string) or CalculateNames (if
+output_names is a list) for each function, and store it as the
+function attribute 'propbox_resolver'.
+
+The function 'collect_resolvers()' will look for resolvers in the
+module's namespace. If an object has a 'propbox_resolver' then that
+will be used a resolver. Objects which are instances of
+propbox.Resolver will also be treated as a resolver. All of the
+resolvers will be placed into a Propbox.
+
+Here's an example::
+
+
+  from __future__ import print_function
+  
+  from rdkit import Chem
+  import propbox
+  #propbox.DEBUG = True # Uncomment for a bit better debugging
+  import sys
+  
+  
+  @propbox.calculate(output_names="mol")
+  def smilin(smiles):
+      mol = Chem.MolFromSmiles(smiles)
+      if mol is None:
+          raise ValueError("RDKit cannot parse the SMILES %r" % (smiles,))
+      return mol
+  
+  @propbox.calculate(output_names="nHEAVIES")
+  def num_heavies(mol):
+      return sum(1 for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1)
+  
+  @propbox.calculate(output_names=["LIGHTEST_HEAVY", "HEAVIEST_HEAVY"])
+  def heavy_range(mol):
+      "Return the lightest and heaviest element numbers of the heavy atoms"
+      atomic_nums = []
+      for atom in mol.GetAtoms():
+          atomic_num = atom.GetAtomicNum()
+          if atomic_num > 1:
+              atomic_nums.append(atomic_num)
+      if not atomic_nums:
+          return (0, 0)
+      return min(atomic_nums), max(atomic_nums)
+  
+  
+  resolver = propbox.collect_resolvers()
+  
+  table = propbox.make_table_from_columns(
+      resolver, {"smiles": ["C", "C#N", "Q", "c1ccccc1O", "[U](F)(F)(F)(F)(F)F"]})
+  
+  table.save(sys.stdout, ["id", "nHEAVIES", "LIGHTEST_HEAVY", "HEAVIEST_HEAVY"],
+             dialect="excel", missing_values=["x", "???", "n/a", "n/a"])
+
+Not surprisingly, this gives the same output as before::
+
+  ID1,1,6,6
+  ID2,2,6,7
+  ID3,???,n/a,n/a
+  ID4,7,6,8
+  ID5,7,9,92
+
+But wait! Why didn't I need to configure the list of input_names?
+
+I could have. I could have said:
+
+  @propbox.calculate(input_names=["smiles"], output_names="mol")
+  def smilin(s):
+      mol = Chem.MolFromSmiles(s)
+      if mol is None:
+          raise ValueError("RDKit cannot parse the SMILES %r" % (s,))
+      return mol
+
+If input_names isn't given then the decorator assume that the function
+arguments are the expected property names. In the original function,
+the function took a 'smiles' parameter, which happened to be the same
+name as the property, so I let it be.
+
+In this modified version, I changed the function to take an 's'
+instead of a 'smiles', so I needed to specify the input_names to get
+the input values from the 'smiles' column instead of the 's' column.
+
+There's another shortcut. If the function computes a single
+descriptor, and the function name starts with 'calc_', then the rest
+of the function name will be used as the descriptor.
+
+That is, the first two functions could be rewritten as::
+
+  @propbox.calculate()
+  def calc_mol(smiles):
+      mol = Chem.MolFromSmiles(smiles)
+      if mol is None:
+          raise ValueError("RDKit cannot parse the SMILES %r" % (smiles,))
+      return mol
+  
+  @propbox.calculate()
+  def calc_nHEAVIES(mol):
+      return sum(1 for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1)
+
+
+I'll use this technique to rewrite the 'len' and 'doubled' descriptors
+from an earlier section::
+
+  from __future__ import print_function
+  
+  import propbox
+  import sys
+  
+  @propbox.calculate()
+  def calc_len(smiles):
+      if "O" in smiles:
+          raise ValueError("No 'O's allowed: %r" % (smiles,))
+      return len(smiles)
+  
+  @propbox.calculate()
+  def calc_doubled(len):
+      return len*2
+  
+  
+  resolver = propbox.collect_resolvers()
+  
+  table = propbox.make_table_from_columns(
+      resolver, {"smiles": ["C", "C#N", "Q", "c1ccccc1O", "[U](F)(F)(F)(F)(F)F"]})
+  
+  table.save(sys.stdout, ["id", "doubled", "smiles"])
+  
+The output from this is:
+
+  id	doubled	smiles
+  ID1	2	C
+  ID2	6	C#N
+  ID3	2	Q
+  ID4	*	c1ccccc1O
+  ID5	38	[U](F)(F)(F)(F)(F)F
+
+If I want to see the exception message I can traverse the rows myself:
+
+  for id, doubled in table.get_future_rows(["id", "doubled"]):
+      print(id.result(), doubled.exception() or doubled.result())
+
+This prints::
+
+  ID1 2
+  ID2 6
+  ID3 2
+  ID4 doubled -> len: ValueError("No 'O's allowed: 'c1ccccc1O'",)
+  ID5 38
+
+
+Property Aliases
+----------------
+
+You'll sometimes need multiple names for the same descriptor.
+
+For example, you might have a resolver which expects "MW" for the
+molecular weight, but you follow the RDKit convention and use
+"MolWt". Propbox comes with an "Aliases" resolver, which will forward
+a request to the right value.
+
+Here's an example, which says that a molecule is "large" if it as an
+molecular weight of at least 75.0 (yes, this is made up)::
+
+  from __future__ import print_function
+  
+  import propbox
+  import sys
+  
+  from rdkit import Chem
+  from rdkit.Chem import Descriptors
+  
+  
+  @propbox.calculate()
+  def calc_mol(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError("RDKit cannot parse the SMILES %r" % (smiles,))
+    return mol
+  
+  @propbox.calculate()
+  def calc_MolWt(mol):
+      return Descriptors.MolWt(mol)
+  
+
+  # This wants a "MW" property, but the molecular weight is available
+  # as the "MolWt" property.
+  @propbox.calculate()
+  def calc_is_large(MW):
+      return MW > 75.0
+
+  # Set up an alias from 'MW' to 'MolWt'
+  aliases = propbox.Aliases({"MW": "MolWt"})
+      
+  resolver = propbox.collect_resolvers()
+  
+  table = propbox.make_table_from_columns(
+      resolver, {"smiles": ["C", "C#N", "Q", "c1ccccc1O", "[U](F)(F)(F)(F)(F)F"]})
+  
+  table.save(sys.stdout, ["is_large", "smiles"])
+
+The output table from the above is::
+
+  is_large	smiles
+  False	C
+  False	C#N
+  *	Q
+  True	c1ccccc1O
+  True	[U](F)(F)(F)(F)(F)F
+
+
+The alias resolver also takes part in exception chaining. Printing the
+exception the 'Q' entry gives:
+
+  MW -> MolWt -> mol: ValueError("RDKit cannot parse the SMILES 'Q'",)
+
+
+This MW/MolWt example is a bit contrived. It's best that you make
+everything use a consistent naming scheme.
+
+You're more likely to use aliases as a predictive model evolves. You
+might start off with a blood-brain barrier model called "BBB". After a
+year, you retrain. Now you have BBB_v1 and BBB_v2. That's fine - you
+can implement both models.
+
+What aliases do is let you define that "BBB" means "the most recent
+validated BBB model", and have it point to BBB_v1 while BBB_v2 is
+under evaluation. Once it's validated, change the alias to point to
+BBB_v2. (You'll likely need BBB_v1 for a while, since other models may
+have been validated against it, and now need to be revalidated on
+BBB_v2.)
+
+
+Property Modules
+----------------
+
+Over time you'll likely run into naming conflicts, where one person
+uses $NAME to mean concept X while another person uses $NAME to mean
+related concept Y. Or to make things more fun, you might have a
+resolver based on OEChem, and another based on RDKit, and both provide
+overlapping functionality.
+
+Propbox implements a module system. The main resolver is in the main
+module, and gets/sets the columns for the main table.
+
+What a propbox.Module does is create a subtable. The resolver for the
+module can get/set values in the subtable. The table and a subtable
+are independent, so there is no conflict between the names.
+
+The exceptions are the two sets of aliases. The module has a set of
+output aliases which says that property X for the main table should be
+resolved as property Y in the subtable. It also has input aliases,
+which say that property B for the subtable should be resolved as
+property A in the main table.
+
+For example, the following file (named 'oceania.py') uses OEChem to
+compute the OEGraphMols as 'mol', and the molecular weight as 'MW'. It
+requires a SMILES string as the 'smiles' property::
+
+  # This is 'oceania.py', based on OEChem
+  from openeye.oechem import *
+  
+  from propbox import calculate, collect_resolvers
+  
+  @calculate()
+  def calc_mol(smiles):
+      mol = OEGraphMol()
+      if OEParseSmiles(mol, smiles):
+          return mol
+      raise ValueError("OEChem cannot parse %r" % (smiles,))
+  
+  @calculate()
+  def calc_MW(mol):
+      return OECalculateMolecularWeight(mol)
+  
+  
+  resolver = collect_resolvers()
+
+
+While the following file (named 'eurasia.py') uses RDKit to compute
+roughly equivalent properties::
+
+  # This is 'eurasia.py', based on RDKit
+  from rdkit import Chem
+  from rdkit.Chem import Descriptors
+  
+  from propbox import calculate, collect_resolvers
+  
+  @calculate()
+  def calc_mol(smiles):
+      mol = Chem.MolFromSmiles(smiles)
+      if mol is None:
+          raise ValueError("RDKit cannot parse %r" % (smiles,))
+      return mol
+  
+  @calculate()
+  def calc_MW(mol):
+      return Descriptors.MolWt(mol)
+  
+  
+  resolver = collect_resolvers()
+
+In "smith.py", I'll try to combine both resolvers into the same Propbox::
+
+
+  import propbox
+  
+  import eurasia, oceania
+  
+  resolver = propbox.Propbox([eurasia.resolver, oceania.resolver])
+
+This doesn't work. Propbox complains, saying::
+
+                   
+  Traceback (most recent call last):
+    File "smith.py", line 5, in <module>
+      resolver = propbox.Propbox([eurasia.resolver, oceania.resolver])
+    File "/Users/dalke/cvses/propbox/propbox/__init__.py", line 134, in __init__
+      self.add_resolver(resolver)
+    File "/Users/dalke/cvses/propbox/propbox/__init__.py", line 163, in add_resolver
+      self._name_to_resolver[output_name]))
+  ValueError: Resolver <propbox.Propbox object at 0x108d5f810> defines the output name 'mol', which was already defined by resolver <propbox.Propbox object at 0x108d4b910>
+
+
+To resolve the conflict, I'll place the oceania resolver in its own
+propbox.Module. I'll also say that "OE_MW" in the main table is an
+alias for "MW" in the subtable, and that "smiles" in the subtable is
+an aliase for "smiles" in the main table::
+
+  import sys
+  import propbox
+  
+  import eurasia, oceania
+  
+  resolver = propbox.Propbox([
+      eurasia.resolver, 
+      propbox.Module("oceania", oceania.resolver,
+                     {"smiles": "smiles"},
+                     {"OE_MW": "MW"}),
+                     ])
+  
+  table = propbox.make_table_from_columns(
+      resolver, {"smiles": ["CC", "CCO", "O=O"]})
+  
+  table.save(sys.stdout, ["smiles", "MW", "OE_MW"])
 
 
 
+As a result I can now compare the two molecular weights:
 
-Andrew Dalke / Dalke Scientific / dalke@dalkescientific.com
+  smiles	MW	OE_MW
+  CC	30.07	30.06904
+  CCO	46.069	46.06844
+  O=O	31.998	31.9988
+  
+
+
+
+Table configuration
+-------------------
+
+The table supports a "config" dictionary, which can be used to pass
+configuration around. It's still experimental, and I don't really want
+to document it.
+
+It exists so you can define configuration information like the object
+to use to de-salt, or if you don't want to specify the object, the
+configuration file or the configuration data to use.
+
+I can't help but wonder if it would be better to do configuration
+through the resolvers, when I create the resolvers, rather than
+through the table's "config".
+
+An additional question is, how do I configure modules? I'm
+experimenting with namespaces, so "oceania.SaltRemove_filename" would
+be the salt remover for the oceania module. It's still up in the air.
+
+
+Table cache
+-----------
+
+This is another experimental feature. The get_cache_value() and
+set_cache_value() are used to get/set the subtable information. It's
+also used for more long-term storage by the resolver.
+
+For example, if the config defines a SaltRemover filename, then the
+resolver which actually needs to remove the salts must create a
+SaltRemover, configured to use that filename. What then?
+
+Obviously I don't want to recreate the SaltRemover for each
+record. Instead, my options are to 1) store it in the table (in which
+case it's reloaded each time I process a batch), 2) store the
+information in some sort of local cache for each resolver. But when is
+the cache reset? Does everything have a unique cache key, or 3)
+something else.
+
+The get/set cache value API is used for #1. I don't think I like it
+though.
+
+
+
+Credits
+=======
+
+Andrew Dalke, Dalke Scientific, dalke@dalkescientific.com
+9 June 2015, Trollhättan, Sweden
 

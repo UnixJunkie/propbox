@@ -658,9 +658,17 @@ def collect_resolvers(d=None):
         if isinstance(value, Resolver):
             resolver = value
         else:
-            resolver = getattr(value, "propbox_resolver", None)
-            if resolver is None:
+            # Grr! Even with the above, I still get the exception
+            #    NameError: Unknown C global variable
+            # when coming from a module with "from openeye.oechem import *"
+            #
+            try:
+                resolver = getattr(value, "propbox_resolver", None)
+            except NameError:
                 continue
+            else:
+                if resolver is None:
+                    continue
         resolvers.append(resolver)
     return Propbox(resolvers)
 

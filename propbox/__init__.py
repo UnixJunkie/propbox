@@ -13,12 +13,12 @@ DEBUG = False
 
 ############### Propbox exceptions
 
-class PropboxException(Exception):
+class PropboxError(Exception):
     pass
 
 # A PropboxKeyError is raised when the resolver does not implement a property
     
-class PropboxKeyError(KeyError, PropboxException):
+class PropboxKeyError(KeyError, PropboxError):
     """A PropboxKeyError is raised when the table does not implement a property name
 
     The two attributes are:
@@ -38,7 +38,7 @@ class PropboxKeyError(KeyError, PropboxException):
 # A ResolverError describes why, for a row, it was not possible to get
 # the given column name from the table.
 
-class ResolverError(PropboxException):
+class ResolverError(PropboxError):
     """A ResolverError is raised when a property cannot be computed.
 
     The three attributes are:

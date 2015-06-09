@@ -361,8 +361,8 @@ class Calculator(Resolver):
         if valid_record_indices:
             # Looks like the calculation code didn't go to completion.
             # This shouldn't happen.
-            raise AssertionError("incomplete processing: %d for %r"
-                                 % (len(result_columns), descriptor))
+            raise AssertionError("incomplete processing: %r has %d records remaining"
+                                 % (column_name, len(valid_record_indices)))
         
         # Copy the results to the main table.
         for output_name, futures in zip(self.output_names, result_columns):

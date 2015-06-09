@@ -78,6 +78,11 @@ class ResolverError(PropboxError):
         # return a path like "abc -> module.def -> mod2.ghi -> xyz"
         # and the exception that caused the error.
         return path, exception
+
+    def get_original_exception(self):
+        if isinstance(self.exception, ResolverError):
+            return self.exception.get_original_exception()
+        return self.exception
     
     def __str__(self):
         path, exception = self.get_error()

@@ -447,6 +447,7 @@ class OutputDescriptors(object):
         for column, result_column in zip(column_results, self._result_columns):
             for i, index in pairs:
                 result_column[index] = _new_future(column[i])
+        del self._valid_record_indices[:]
         
     def add_column_futures(self, column_futures):
         """Specify a list/tuple of futures for each column

@@ -201,9 +201,9 @@ class Aliases(Resolver):
 
         # Get the underlying name, wrap any exception with a description of
         # the alias step, and set the new results.
-        futures = table.get_futures(descriptor_alias)
+        futures = table.get_futures(alias_name)
         futures = wrap_future_exceptions(futures, table.table_name, name)
-        table.set_futures(column, futures)
+        table.set_futures(name, futures)
 
                 
 ### A Module isolates a resolver into its own subtable
@@ -434,7 +434,7 @@ class OutputDescriptors(object):
             raise ValueError("Expecting %d items in column_results, got %d"
                             % (len(self._output_names), len(column_results)))
         n = len(self._valid_record_indices)
-        for i, column in enumerate(columns):
+        for i, column in enumerate(column_results):
             if len(column) != n:
                 raise TypeError("Expecting %d values for column %r, got %d"
                                 % (n, self._output_names[i], len(column)))

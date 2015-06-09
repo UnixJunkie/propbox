@@ -127,7 +127,7 @@ def main(argv=None):
 
     columns = args.columns.split(",")
     if not columns:
-        args.error("--columns my not be empty")
+        args.error("--columns may not be empty")
 
     headers = args.headers
     if headers is None:

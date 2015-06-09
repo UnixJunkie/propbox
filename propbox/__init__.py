@@ -477,7 +477,7 @@ class OutputDescriptors(object):
 # A calculator which calls a function that computes a single descriptor name
                 
 class CalculateName(Calculator):
-    def __init__(self, input_names, output_name, f, docstring, include_table=False,
+    def __init__(self, input_names, output_name, f, docstring=None, include_table=False,
                  resolver_name=None):
         self.input_names = input_names
         self.output_names = [output_name]
@@ -511,7 +511,7 @@ class CalculateName(Calculator):
 # A calculator which calls a function that computes multiple descriptor names
     
 class CalculateNames(Calculator):
-    def __init__(self, input_names, output_names, f, docstring, include_table=False,
+    def __init__(self, input_names, output_names, f, docstring=None, include_table=False,
                  resolver_name=None):
         self.input_names = input_names
         self.output_names = output_names
